@@ -47,6 +47,35 @@ FALLBACK_ART_SVG = """<svg xmlns='http://www.w3.org/2000/svg' width='512' height
 <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='#7c3aed'/><stop offset='100%' stop-color='#06b6d4'/></linearGradient></defs>
 <rect width='512' height='512' rx='96' fill='#0b1020'/><circle cx='302' cy='172' r='74' fill='url(#g)' opacity='.95'/><rect x='140' y='108' width='48' height='248' rx='24' fill='url(#g)'/><path d='M188 132c93 0 154-23 154-61v231' fill='none' stroke='url(#g)' stroke-width='42' stroke-linecap='round'/></svg>""".encode()
 
+# ───────── Import scoring config ─────────
+
+# Штрафные ключевые слова при импорте (keyword → вес штрафа)
+_IMPORT_PENALTY_KW: dict[str, float] = {
+    "clean":         0.20,
+    "clean version": 0.25,
+    "censored":      0.25,
+    "radio edit":    0.15,
+    "edited":        0.10,
+    "live":          0.15,
+    "cover":         0.15,
+    "karaoke":       0.30,
+    "acoustic":      0.12,
+    "slowed":        0.25,
+    "reverb":        0.20,
+    "nightcore":     0.30,
+    "sped up":       0.25,
+    "8d":            0.25,
+    "instrumental":  0.15,
+}
+_IMPORT_PENALTY_MAX = 0.50
+
+# Бонус источника при импорте (SC предпочтительнее)
+_IMPORT_SRC_BONUS: dict[str, float] = {
+    "soundcloud":  0.06,
+    "youtube":     0.00,
+    "deezer":     -0.02,
+}
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -217,17 +246,20 @@ async def api_search(
     t0 = time.monotonic()
     tasks, labels = [], []
 
+    # ── Порядок: SoundCloud → YouTube → Deezer ──
+
     if source in ("all", "soundcloud"):
         tasks.append(sc.search(q, limit=30 if source == "all" else 50))
         labels.append("soundcloud")
 
-    if source in ("all", "deezer") and DEEZER_ENABLED:
-        tasks.append(deezer.search(q, limit=20 if source == "all" else 50))
-        labels.append("deezer")
-
+    # CHANGED: YouTube теперь перед Deezer, лимит увеличен до 20
     if source in ("all", "youtube") and YTMUSIC_ENABLED:
-        tasks.append(ytmusic.search(q, limit=15 if source == "all" else 50))
+        tasks.append(ytmusic.search(q, limit=20 if source == "all" else 50))
         labels.append("youtube")
+
+    if source in ("all", "deezer") and DEEZER_ENABLED:
+        tasks.append(deezer.search(q, limit=15 if source == "all" else 50))
+        labels.append("deezer")
 
     if not tasks:
         return {"query": q, "count": 0, "tracks": []}
@@ -405,7 +437,6 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
     def _normalize(s: str) -> set:
         """Нормализовать строку в множество слов для сравнения."""
         s = s.lower()
-        # Убираем feat/ft/prod маркеры — они мешают, но не важны для ID
         s = s.replace("feat.", " ").replace("feat ", " ")
         s = s.replace("ft.", " ").replace("ft ", " ")
         s = s.replace("prod.", " ").replace("prod ", " ")
@@ -425,18 +456,18 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
         if not q_words or not f_words:
             return 0.0
 
-        # Сколько слов из запроса нашлось в результате
         forward = len(q_words & f_words) / len(q_words)
-        # Сколько слов из результата есть в запросе (защита от мусора)
         backward = len(q_words & f_words) / len(f_words)
 
-        # Среднее — учитываем оба направления
         return forward * 0.6 + backward * 0.4
+
+    # ── CHANGED: _pick_best теперь учитывает штрафы и source-бонус ──
 
     def _pick_best(results: list, ym_track: dict, min_text_score: float = 0.3):
         """
         Выбрать лучший трек из результатов поиска.
-        Учитывает и длительность, и текстовое совпадение.
+        Учитывает текст, длительность, штрафы за нежелательные
+        версии и бонус источника.
         """
         if not results:
             return None
@@ -444,6 +475,7 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
         expected = ym_track.get("duration_sec", 0)
         q_artist = ym_track.get("artist", "")
         q_title = ym_track.get("title", "")
+        query_text = f"{q_artist} {q_title}".lower()
 
         scored = []
         for t in results:
@@ -452,30 +484,41 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
                 t.get("artist", ""), t.get("title", ""),
             )
 
-            # Оценка по длительности: 1.0 = идеально, 0.0 = очень далеко
+            # Оценка по длительности
             if expected > 0 and t.get("duration_sec", 0) > 0:
                 diff = abs(t["duration_sec"] - expected)
                 dur_score = max(0, 1.0 - diff / max(expected, 60))
             else:
-                dur_score = 0.5  # неизвестна — нейтральная
+                dur_score = 0.5
 
-            # Итоговый балл: текст важнее длительности
-            total = text_score * 0.7 + dur_score * 0.3
+            # ── NEW: штрафы за нежелательные версии ──
+            candidate_text = f"{t.get('title', '')} {t.get('artist', '')}".lower()
+            penalty = 0.0
+            for kw, pw in _IMPORT_PENALTY_KW.items():
+                if kw in candidate_text and kw not in query_text:
+                    penalty += pw
+            penalty = min(penalty, _IMPORT_PENALTY_MAX)
 
-            scored.append((t, total, text_score, dur_score))
+            # ── NEW: бонус источника (SoundCloud +0.06) ──
+            src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
 
-        # Сортируем по общему баллу
+            total = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
+
+            scored.append((t, total, text_score, dur_score, penalty))
+
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        best, total, text_sc, dur_sc = scored[0]
+        best, total, text_sc, dur_sc, pen = scored[0]
 
+        # ── CHANGED: расширенный лог с penalty и source ──
         log.info(
-            "  Match: '%.40s' by '%.30s' → text=%.2f dur=%.2f total=%.2f",
+            "  Match: '%.40s' by '%.30s' [%s] "
+            "→ text=%.2f dur=%.2f pen=%.2f total=%.2f",
             best.get("title", "?"), best.get("artist", "?"),
-            text_sc, dur_sc, total,
+            best.get("source", "?"),
+            text_sc, dur_sc, pen, total,
         )
 
-        # Отклоняем если текстовое совпадение слишком низкое
         if text_sc < min_text_score:
             log.warning(
                 "  REJECTED (text_score=%.2f < %.2f): '%s - %s' ≠ '%s - %s'",
@@ -487,21 +530,14 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
 
         return best
 
+    # ── CHANGED: порядок источников SC → YTMusic → Deezer ──
+
     async def find_one(ym_track: dict):
         async with sem:
             query = ym_track["search_query"]
             log.info("Import searching: '%s'", query)
 
-            # 1. Deezer
-            try:
-                results = await deezer.search(query, limit=10)
-                best = _pick_best(results, ym_track)
-                if best:
-                    return best
-            except Exception as e:
-                log.warning("Import Deezer '%s': %s", query, e)
-
-            # 2. SoundCloud
+            # 1. SoundCloud (приоритет)
             try:
                 results = await sc.search(query, limit=10)
                 best = _pick_best(results, ym_track)
@@ -510,7 +546,7 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
             except Exception as e:
                 log.warning("Import SC '%s': %s", query, e)
 
-            # 3. YouTube Music
+            # 2. YouTube Music
             try:
                 results = await ytmusic.search(query, limit=10)
                 best = _pick_best(results, ym_track, min_text_score=0.25)
@@ -518,6 +554,15 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
                     return best
             except Exception as e:
                 log.warning("Import YTMusic '%s': %s", query, e)
+
+            # 3. Deezer (fallback)
+            try:
+                results = await deezer.search(query, limit=10)
+                best = _pick_best(results, ym_track)
+                if best:
+                    return best
+            except Exception as e:
+                log.warning("Import Deezer '%s': %s", query, e)
 
             log.warning("Import: NOT FOUND '%s'", query)
             return None

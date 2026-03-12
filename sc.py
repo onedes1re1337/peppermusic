@@ -221,6 +221,9 @@ def _find_best_yt_url(query: str, expected_sec: int) -> str:
         "reaction", "реакция", "interview", "интервью",
         "slowed", "reverb", "speed up", "nightcore",
         "8d", "басс", "bass boosted",
+        # ↓ NEW
+        "clean", "clean version", "censored",
+        "radio edit", "edited",
     }
 
     # Слова-бонусы (студийная версия)
