@@ -253,6 +253,23 @@ def _yt_search(query: str, limit: int) -> list:
         info = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
     return info.get("entries") or []
 
+def _best_thumbnail(thumbnails) -> Optional[str]:
+    """Выбрать лучшую обложку из списка thumbnails yt-dlp."""
+    if not thumbnails or not isinstance(thumbnails, list):
+        return None
+    # Сортируем по разрешению (ширина × высота), берём самую большую
+    best = None
+    best_size = 0
+    for t in thumbnails:
+        if not isinstance(t, dict) or not t.get("url"):
+            continue
+        w = t.get("width", 0) or 0
+        h = t.get("height", 0) or 0
+        size = w * h
+        if size >= best_size:
+            best_size = size
+            best = t["url"]
+    return best
 
 async def search(query: str, limit: int = 50) -> List[Dict[str, Any]]:
     entries = await asyncio.to_thread(_yt_search, query, limit)
@@ -262,13 +279,24 @@ async def search(query: str, limit: int = 50) -> List[Dict[str, Any]]:
         if not url:
             continue
         tid = _tid(url)
+
+        # ── Обложка: пробуем несколько полей ──
+        thumb = (
+            e.get("thumbnail")
+            or _best_thumbnail(e.get("thumbnails"))
+        )
+        # SoundCloud: заменяем маленький размер на большой
+        if thumb and "sndcdn.com" in thumb:
+            thumb = thumb.replace("-large.", "-t500x500.")
+            thumb = thumb.replace("-small.", "-t500x500.")
+
         info = remember_track({
             "id": tid,
             "title": e.get("title", "Без названия"),
             "artist": e.get("uploader", "SoundCloud"),
             "duration": _dur(e.get("duration", 0)),
             "duration_sec": e.get("duration", 0),
-            "artwork_url": e.get("thumbnail"),
+            "artwork_url": thumb,
             "url": url,
             "source": "soundcloud",
         })
