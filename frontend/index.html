@@ -1052,8 +1052,10 @@
 
     $list._tracks = favoriteTracks;
     $list._source = "favorites";
-    
-    // Добавляем поле быстрого поиска только для избранного
+
+    // Захватываем в замыкание — защита от перезаписи $list._tracks
+    const boundTracks = favoriteTracks;
+
     const searchInputHtml = `
       <div class="status" style="padding:12px;">
         <input type="text" id="fav-search-input" placeholder="Название трека или артист">
@@ -1061,11 +1063,13 @@
 
     $list.innerHTML = searchInputHtml + `
       <div class="track-list" id="fav-tracks-list">
-        ${favoriteTracks.map((t, i) => `
-          <article class="track playing" data-id="${esc(String(t.id))}" data-idx="${i}">
+        ${favoriteTracks.map((t, i) => {
+          const active = cur && String(cur.id) === String(t.id);
+          return `
+          <article class="track${active ? " playing" : ""}" data-id="${esc(String(t.id))}" data-idx="${i}">
             <div class="t-art-wrap">
               <img class="t-art" src="${esc(artUrl(t))}" alt="" loading="lazy"/>
-              <div class="t-play-btn"><svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg></div>
+              <div class="t-play-btn">${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>'}</div>
             </div>
             <div class="t-meta">
               <div class="t-name">${esc(t.title)}</div>
@@ -1077,47 +1081,48 @@
             </div>
             <div class="t-side">
               <button class="t-fav active" data-id="${esc(String(t.id))}"><svg viewBox="0 0 24 24"><path d="M12 21s-6.716-4.35-9.193-8.091C.812 9.824 2.002 5.5 5.9 4.427 8.161 3.805 10.112 4.75 12 6.7c1.888-1.95 3.839-2.895 6.1-2.273 3.898 1.073 5.088 5.397 3.093 8.482C18.716 16.65 12 21 12 21z"/></svg></button>
-              <button class="t-action"><svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg></button>
+              <button class="t-action">${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}</button>
             </div>
-          </article>
-        `).join("")}
+          </article>`;
+        }).join("")}
       </div>`;
 
-    // Логика фильтрации
     const searchInput = $("fav-search-input");
     const listEl = $("fav-tracks-list");
-    
+
     searchInput.addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();
-      const rows = Array.from(listEl.querySelectorAll(".track"));
-      rows.forEach(row => {
+      Array.from(listEl.querySelectorAll(".track")).forEach(row => {
         const title = row.querySelector(".t-name").textContent.toLowerCase();
         const artist = row.querySelector(".t-artist").textContent.toLowerCase();
-        if (title.includes(q) || artist.includes(q)) {
-          row.style.display = "";
-        } else {
-          row.style.display = "none";
-        }
+        row.style.display = (title.includes(q) || artist.includes(q)) ? "" : "none";
       });
     });
 
-    // Клик по трекам в избранных работает стандартно
+    // Все обработчики используют boundTracks, а не $list._tracks
+    listEl.querySelectorAll(".track").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        if (e.target.closest(".t-fav") || e.target.closest(".t-action")) return;
+        onTrackClick(el, boundTracks);
+      });
+    });
     listEl.querySelectorAll(".t-action").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        onTrackClick(btn.closest(".track"));
+        onTrackClick(btn.closest(".track"), boundTracks);
       });
     });
     listEl.querySelectorAll(".t-art-wrap").forEach((wrap) => {
       wrap.addEventListener("click", (e) => {
         e.stopPropagation();
-        onTrackClick(wrap.closest(".track"));
+        onTrackClick(wrap.closest(".track"), boundTracks);
       });
     });
     listEl.querySelectorAll(".t-fav").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        await toggleFavorite({ id: btn.dataset.id });
+        const idx = Number(btn.closest(".track").dataset.idx);
+        await toggleFavorite(boundTracks[idx] || { id: btn.dataset.id });
         renderFavorites();
       });
     });
@@ -1164,15 +1169,21 @@
   }
 
   function bindTrackEvents() {
+    // Захватываем треки в замыкание — защита от перезаписи $list._tracks
+    const boundTracks = $list._tracks;
+
     $list.querySelectorAll(".track").forEach((el) => {
       el.addEventListener("click", (e) => {
         if (e.target.closest(".t-fav") || e.target.closest(".t-action") || e.target.closest(".t-add-pl") || e.target.closest(".t-remove-pl")) return;
-        onTrackClick(el);
+        onTrackClick(el, boundTracks);
       });
     });
 
     $list.querySelectorAll(".t-action").forEach((btn) => {
-      btn.addEventListener("click", (e) => { e.stopPropagation(); onTrackClick(btn.closest(".track")); });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onTrackClick(btn.closest(".track"), boundTracks);
+      });
     });
 
     $list.querySelectorAll(".t-fav").forEach((btn) => {
@@ -1180,9 +1191,8 @@
         e.stopPropagation();
         const row = btn.closest(".track");
         const idx = Number(row.dataset.idx);
-        const track = $list._tracks[idx];
+        const track = boundTracks[idx];
         await toggleFavorite(track);
-        // Re-render current view
         if (currentView === "favorites") renderFavorites();
         else if (currentView === "playlists" && currentPlaylistDetail) renderPlaylistDetail(currentPlaylistDetail);
         else if (lastTracks.length) renderTracks(lastTracks, "search");
@@ -1194,7 +1204,7 @@
         e.stopPropagation();
         const row = btn.closest(".track");
         const idx = Number(row.dataset.idx);
-        pendingTrackForPlaylist = $list._tracks[idx];
+        pendingTrackForPlaylist = boundTracks[idx];
         openAddToPlaylistModal();
       });
     });
@@ -1206,9 +1216,10 @@
     syncFavoriteButtons();
   }
 
-  function onTrackClick(el) {
+  function onTrackClick(el, tracksOverride) {
+    const tracks = tracksOverride || $list._tracks;
     const idx = Number(el.dataset.idx);
-    const track = $list._tracks[idx];
+    const track = tracks[idx];
     if (!track) return;
 
     if (cur && String(cur.id) === String(track.id)) {
@@ -1216,7 +1227,7 @@
       return;
     }
 
-    setQueue($list._tracks, idx);
+    setQueue(tracks, idx);
     playTrack(track);
   }
 
@@ -1680,7 +1691,7 @@
       $newPlSubmit.disabled = false;
     }
   });
-  
+
   // ── Source chips ──
   document.querySelectorAll(".source-chip").forEach((chip) => {
     chip.addEventListener("click", () => {

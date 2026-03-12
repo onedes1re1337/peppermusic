@@ -251,6 +251,10 @@ async def lifespan(_: FastAPI):
         DEV_MODE, HOST, PORT, DEEZER_ENABLED, YTMUSIC_ENABLED,
         bool(YANDEX_MUSIC_TOKEN))
     task = asyncio.create_task(_poll())
+
+    # ── NEW: фоновая очистка дискового кэша ──
+    cleanup_task = asyncio.create_task(sc.periodic_disk_cleanup(3600))
+
     if WEBAPP_URL and not DEV_MODE:
         try:
             await bot.set_chat_menu_button(
@@ -261,8 +265,13 @@ async def lifespan(_: FastAPI):
             log.warning("menu button: %s", e)
     yield
     task.cancel()
+    cleanup_task.cancel()
     try:
         await task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await cleanup_task
     except asyncio.CancelledError:
         pass
     await bot.session.close()
@@ -607,40 +616,41 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
 
     # ── CHANGED: порядок источников SC → YTMusic → Deezer ──
 
+    async def _safe_search(func, query, limit):
+        """Обёртка для безопасного поиска."""
+        try:
+            return await retry_async(func, query, limit=limit, retries=2)
+        except Exception as e:
+            log.warning("Import search failed (%s): %s", func.__module__, e)
+            return []
+
     async def find_one(ym_track: dict):
         async with sem:
             query = ym_track["search_query"]
             log.info("Import searching: '%s'", query)
 
-            # 1. SoundCloud (приоритет)
-            try:
-                results = await retry_async(sc.search, query, limit=10, retries=2)
-                best = _pick_best(results, ym_track)
-                if best:
-                    return best
-            except Exception as e:
-                log.warning("Import SC '%s': %s", query, e)
+            # Параллельный поиск по ВСЕМ источникам
+            sc_task = asyncio.create_task(_safe_search(sc.search, query, 10))
+            yt_task = asyncio.create_task(_safe_search(ytmusic.search, query, 10))
+            dz_task = asyncio.create_task(_safe_search(deezer.search, query, 10))
 
-            # 2. YouTube Music
-            try:
-                results = await retry_async(ytmusic.search, query, limit=10, retries=2)
-                best = _pick_best(results, ym_track, min_text_score=0.25)
-                if best:
-                    return best
-            except Exception as e:
-                log.warning("Import YTMusic '%s': %s", query, e)
+            sc_res, yt_res, dz_res = await asyncio.gather(
+                sc_task, yt_task, dz_task
+            )
 
-            # 3. Deezer (fallback)
-            try:
-                results = await retry_async(deezer.search, query, limit=10, retries=2)
-                best = _pick_best(results, ym_track)
-                if best:
-                    return best
-            except Exception as e:
-                log.warning("Import Deezer '%s': %s", query, e)
+            # Собираем все результаты в один пул и выбираем лучшего
+            all_results = (sc_res or []) + (yt_res or []) + (dz_res or [])
 
-            log.warning("Import: NOT FOUND '%s'", query)
-            return None
+            if not all_results:
+                log.warning("Import: NOT FOUND '%s'", query)
+                return None
+
+            best = _pick_best(all_results, ym_track)
+
+            if not best:
+                log.warning("Import: NO MATCH '%s' (%d candidates)",
+                            query, len(all_results))
+            return best
 
     found = await asyncio.gather(*[find_one(t) for t in ym["tracks"]])
 
