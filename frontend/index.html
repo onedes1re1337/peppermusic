@@ -570,6 +570,47 @@
     .modal-pl-name{font-size:14px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .modal-pl-cnt{font-size:12px;color:var(--muted);}
 
+    .ym-import-tabs{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+      margin-bottom:12px;
+    }
+    .ym-import-tab{
+      border:none;
+      border-radius:14px;
+      padding:10px 12px;
+      background:rgba(255,255,255,.06);
+      color:var(--text);
+      font:inherit;
+      cursor:pointer;
+    }
+    .ym-import-tab.is-active{
+      background:rgba(124,58,237,.24);
+      box-shadow:inset 0 0 0 1px rgba(124,58,237,.35);
+    }
+    .ym-import-panel.hidden{
+      display:none;
+    }
+    .ym-upload-box{
+      display:block;
+      border:1px dashed rgba(255,255,255,.14);
+      border-radius:16px;
+      padding:16px;
+      background:rgba(255,255,255,.04);
+      cursor:pointer;
+      margin-bottom:12px;
+    }
+    .ym-upload-title{
+      font-weight:700;
+      margin-bottom:4px;
+    }
+    .ym-upload-subtitle{
+      font-size:13px;
+      color:var(--muted);
+      line-height:1.45;
+    }
+
     /* ── Toast ── */
     .toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
     .toast{
@@ -740,9 +781,34 @@
     <div class="modal-sheet">
       <div class="modal-handle"></div>
       <div class="modal-title">Импорт из Яндекс Музыки</div>
-      <input id="import-ym-url" class="modal-input" type="url" placeholder="Вставь ссылку на плейлист Яндекс Музыки..." autocomplete="off"/>
+
+      <div class="ym-import-tabs">
+        <button id="import-ym-tab-url" class="ym-import-tab is-active" type="button">По ссылке</button>
+        <button id="import-ym-tab-shot" class="ym-import-tab" type="button">По скриншоту</button>
+      </div>
+
+      <div id="import-ym-panel-url" class="ym-import-panel">
+        <input
+          id="import-ym-url"
+          class="modal-input"
+          type="url"
+          placeholder="Вставь ссылку на плейлист Яндекс Музыки..."
+          autocomplete="off"
+        />
+        <button id="import-ym-submit" class="modal-submit" disabled>Импортировать</button>
+      </div>
+
+      <div id="import-ym-panel-shot" class="ym-import-panel hidden">
+        <label class="ym-upload-box" for="import-ym-file">
+          <input id="import-ym-file" type="file" accept="image/*" hidden />
+          <div class="ym-upload-title">Загрузи скриншот списка треков</div>
+          <div class="ym-upload-subtitle">Лучше, если на скриншоте видны строки вида Artist — Title</div>
+        </label>
+        <div id="import-ym-file-name" class="modal-status"></div>
+        <button id="import-ym-shot-submit" class="modal-submit" disabled>Распознать и импортировать</button>
+      </div>
+
       <div id="import-ym-status" class="modal-status"></div>
-      <button id="import-ym-submit" class="modal-submit" disabled>Импортировать</button>
     </div>
   </div>
 
@@ -829,6 +895,14 @@
   const $importYMUrl = $("import-ym-url");
   const $importYMSubmit = $("import-ym-submit");
   const $importYMStatus = $("import-ym-status");
+
+  const $importYMTabUrl = $("import-ym-tab-url");
+  const $importYMTabShot = $("import-ym-tab-shot");
+  const $importYMPanelUrl = $("import-ym-panel-url");
+  const $importYMPanelShot = $("import-ym-panel-shot");
+  const $importYMFile = $("import-ym-file");
+  const $importYMFileName = $("import-ym-file-name");
+  const $importYMShotSubmit = $("import-ym-shot-submit");
 
   const iconPlay = $btnPP.querySelector(".icon-play");
   const iconPause = $btnPP.querySelector(".icon-pause");
@@ -1558,66 +1632,147 @@
     openModal($modalAddToPl);
   }
 
-    // ── Yandex Music import ──
-  if ($importYMUrl && $importYMSubmit && $importYMStatus) {
-    $importYMUrl.addEventListener("input", () => {
+  // ── Yandex Music import ──
+  if ($modalImportYM && $importYMStatus) {
+    let ymMode = "url";
+
+    function setYMMode(mode) {
+      ymMode = mode;
+      $importYMTabUrl?.classList.toggle("is-active", mode === "url");
+      $importYMTabShot?.classList.toggle("is-active", mode === "shot");
+      $importYMPanelUrl?.classList.toggle("hidden", mode !== "url");
+      $importYMPanelShot?.classList.toggle("hidden", mode !== "shot");
+      $importYMStatus.textContent = "";
+    }
+
+    async function readSSEStream(res) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+
+          const line = chunk.split("\n").find((x) => x.startsWith("data: "));
+          if (!line) continue;
+
+          try {
+            const msg = JSON.parse(line.slice(6));
+
+            if (msg.type === "start") {
+              $importYMStatus.textContent = `⏳ Начинаю импорт: ${msg.total} треков`;
+            } else if (msg.type === "progress") {
+              const pct = msg.total ? Math.round((msg.current / msg.total) * 100) : 0;
+              $importYMStatus.textContent =
+                `⏳ ${pct}% • ${msg.current}/${msg.total} • импортировано ${msg.imported}`;
+            } else if (msg.type === "done") {
+              $importYMStatus.textContent =
+                `✅ Готово: ${msg.imported}/${msg.total} треков`;
+              await loadPlaylists();
+              closeModal($modalImportYM);
+              toast("✅", `Импортировано ${msg.imported} треков`);
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    async function startUrlImport() {
+      const url = $importYMUrl.value.trim();
+      if (!url) return;
+
+      $importYMSubmit.disabled = true;
+      $importYMStatus.textContent = "⏳ Запускаю импорт...";
+
+      try {
+        const res = await fetch("/api/import/yandex", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Init-Data": INIT_DATA,
+          },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!res.ok) {
+          let msg = "Ошибка импорта";
+          try {
+            const data = await res.json();
+            msg = data.detail || msg;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+
+        await readSSEStream(res);
+      } catch (e) {
+        $importYMStatus.textContent = `❌ ${e.message || "Ошибка"}`;
+      } finally {
+        $importYMSubmit.disabled = false;
+      }
+    }
+
+    async function startScreenshotImport() {
+      const file = $importYMFile?.files?.[0];
+      if (!file) return;
+
+      $importYMShotSubmit.disabled = true;
+      $importYMStatus.textContent = "⏳ Распознаю скриншот...";
+
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("name", "Яндекс Музыка");
+
+        const res = await fetch("/api/import/yandex/screenshot", {
+          method: "POST",
+          headers: {
+            "X-Init-Data": INIT_DATA,
+          },
+          body: fd,
+        });
+
+        if (!res.ok) {
+          let msg = "Ошибка распознавания";
+          try {
+            const data = await res.json();
+            msg = data.detail || msg;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+
+        await readSSEStream(res);
+      } catch (e) {
+        $importYMStatus.textContent = `❌ ${e.message || "Ошибка"}`;
+      } finally {
+        $importYMShotSubmit.disabled = false;
+      }
+    }
+
+    $importYMTabUrl?.addEventListener("click", () => setYMMode("url"));
+    $importYMTabShot?.addEventListener("click", () => setYMMode("shot"));
+
+    $importYMUrl?.addEventListener("input", () => {
       $importYMSubmit.disabled = !$importYMUrl.value.trim();
     });
 
-  $importYMSubmit.addEventListener("click", async () => {
-    const url = $importYMUrl.value.trim();
-    if (!url) return;
+    $importYMFile?.addEventListener("change", () => {
+      const file = $importYMFile.files?.[0];
+      $importYMFileName.textContent = file ? `📷 ${file.name}` : "";
+      $importYMShotSubmit.disabled = !file;
+    });
 
-    $importYMSubmit.disabled = true;
-    $importYMStatus.textContent = "⏳ Запускаю импорт...";
+    $importYMSubmit?.addEventListener("click", startUrlImport);
+    $importYMShotSubmit?.addEventListener("click", startScreenshotImport);
 
-    try {
-      const data = await api("POST", "/api/import/yandex", { url });
-
-      // Начинаем опрашивать статус
-      const pollInterval = setInterval(async () => {
-        try {
-          const status = await api("GET", `/api/import/yandex/status/${data.task_id}`);
-
-          if (status.status === "running") {
-            const pct = status.total > 0 ? Math.round(status.current / status.total * 100) : 0;
-            const eta = status.current > 10
-              ? Math.round((status.total - status.current) * 0.3)
-              : '...';
-
-            $importYMStatus.innerHTML = `
-              <div style="margin-bottom: 8px;">Импортирую треки: ${status.current} / ${status.total}</div>
-              <div style="height: 6px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden;">
-                <div style="height: 100%; width: ${pct}%; background: linear-gradient(90deg, #7c3aed, #06b6d4); transition: width .3s ease;"></div>
-              </div>
-              <div style="margin-top: 6px; font-size: 12px; color: var(--muted);">
-                Найдено: ${status.imported}  •  Примерно осталось: ${eta} сек
-              </div>
-            `;
-          }
-
-          if (status.status === "done") {
-            clearInterval(pollInterval);
-            $importYMStatus.textContent = `✅ Готово: импортировано ${status.imported} из ${status.total} треков`;
-            toast("✅", `Плейлист «${status.name}» импортирован`);
-            await loadPlaylists();
-            setTimeout(() => closeModal($modalImportYM), 2500);
-          }
-
-          if (status.status === "error") {
-            clearInterval(pollInterval);
-            $importYMStatus.textContent = `❌ Ошибка: ${status.error}`;
-            $importYMSubmit.disabled = false;
-          }
-
-        } catch (_) {}
-      }, 1000);
-
-    } catch (e) {
-      $importYMStatus.textContent = `❌ ${e.message}`;
-      $importYMSubmit.disabled = false;
-    }
-  });
+    setYMMode("url");
   }
 
   if ($modalImportYM) {
