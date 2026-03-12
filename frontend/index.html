@@ -287,6 +287,9 @@
       transition:all .15s ease;
     }
     .t-fav,.t-add-pl{width:38px;height:38px;border-radius:13px;}
+    .t-fav svg,.fav-btn svg{width:18px;height:18px;fill:currentColor;display:block;}
+    .t-fav{color:var(--muted);}
+    .t-fav.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
 
     .t-remove-pl {
       width: 38px; height: 38px; border-radius: 13px;
@@ -845,6 +848,7 @@
   let searchTimer = null;
   let lastTracks = [];
   let favoriteTracks = [];
+  let currentQueueLoop = false;
   let currentQueue = [];
   let currentIndex = -1;
   let activeSource = "all";
@@ -983,9 +987,10 @@
   }
 
   // ── Queue / Shuffle ──
-  function setQueue(tracks, idx) {
+  function setQueue(tracks, idx, options = {}) {
     currentQueue = [...tracks];
     currentIndex = idx;
+    currentQueueLoop = !!options.loop;
   }
 
   function shuffleArray(arr) {
@@ -1186,7 +1191,9 @@
       return;
     }
 
-    setQueue(tracks, idx);
+    const source = el.closest("#fav-tracks-list") ? "favorites" : ($list._source || currentView);
+    const shouldLoopQueue = source === "favorites" || source === "playlist";
+    setQueue(tracks, idx, { loop: shouldLoopQueue });
     playTrack(track);
   }
 
@@ -1228,9 +1235,11 @@
       audio.play().catch(console.error);
       return;
     }
-    if (index < 0) index = currentQueue.length - 1;
+    if (index < 0) {
+      index = (repeatMode === "all" || currentQueueLoop) ? currentQueue.length - 1 : 0;
+    }
     if (index >= currentQueue.length) {
-      if (repeatMode === "all") index = 0;
+      if (repeatMode === "all" || currentQueueLoop) index = 0;
       else { setPlaying(false); return; }
     }
     currentIndex = index;
@@ -1466,14 +1475,14 @@
 
     $("pl-play-all")?.addEventListener("click", () => {
       if (!tracks.length) return;
-      setQueue(tracks, 0);
+      setQueue(tracks, 0, { loop: true });
       playTrack(tracks[0]);
     });
 
     $("pl-shuffle-btn")?.addEventListener("click", () => {
       if (!tracks.length) return;
       const shuffled = shuffleArray(tracks);
-      setQueue(shuffled, 0);
+      setQueue(shuffled, 0, { loop: true });
       playTrack(shuffled[0]);
       toast("🔀", "Перемешано");
     });
