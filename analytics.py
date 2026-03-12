@@ -2,20 +2,30 @@ import sqlite3
 import time
 import uuid
 from typing import Optional, List, Tuple, Dict, Any
+import threading
 
 from config import DB_PATH
 
+_local = threading.local()
 
 def _con() -> sqlite3.Connection:
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+    """Одно соединение на поток, переиспользуется."""
+    if not hasattr(_local, "conn") or _local.conn is None:
+        c = sqlite3.connect(DB_PATH, check_same_thread=False)
+        c.row_factory = sqlite3.Row
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA synchronous=NORMAL")      # быстрее записи
+        c.execute("PRAGMA cache_size=-8000")         # 8MB кэш
+        c.execute("PRAGMA busy_timeout=5000")        # ждать 5с при блокировке
+        _local.conn = c
+    return _local.conn
 
 
 # ────────── schema ──────────
 
 def init_db() -> None:
-    c = _con()
+    c = sqlite3.connect(DB_PATH, check_same_thread=False)
+    c.row_factory = sqlite3.Row
     try:
         c.executescript("""
             PRAGMA journal_mode=WAL;
@@ -113,31 +123,26 @@ def init_db() -> None:
 
 def _upsert_user(user: dict, now: int) -> None:
     c = _con()
-    try:
-        exists = c.execute(
-            "SELECT 1 FROM users WHERE user_id=?", (user["id"],)
-        ).fetchone()
-        if exists is None:
-            c.execute(
-                "INSERT INTO users"
-                "(user_id,username,first_name,last_name,first_seen,last_seen)"
-                " VALUES(?,?,?,?,?,?)",
-                (user["id"], user.get("username"), user.get("first_name"),
-                 user.get("last_name"), now, now),
-            )
-        else:
-            c.execute(
-                "UPDATE users SET username=?,first_name=?,last_name=?,"
-                "last_seen=? WHERE user_id=?",
-                (user.get("username"), user.get("first_name"),
-                 user.get("last_name"), now, user["id"]),
-            )
-        c.commit()
-    finally:
-        c.close()
+    exists = c.execute(
+        "SELECT 1 FROM users WHERE user_id=?", (user["id"],)
+    ).fetchone()
+    if exists is None:
+        c.execute(
+            "INSERT INTO users"
+            "(user_id,username,first_name,last_name,first_seen,last_seen)"
+            " VALUES(?,?,?,?,?,?)",
+            (user["id"], user.get("username"), user.get("first_name"),
+             user.get("last_name"), now, now),
+        )
+    else:
+        c.execute(
+            "UPDATE users SET username=?,first_name=?,last_name=?,"
+            "last_seen=? WHERE user_id=?",
+            (user.get("username"), user.get("first_name"),
+             user.get("last_name"), now, user["id"]),
+        )
+    c.commit()
 
-
-# ────────── tracks ──────────
 
 def upsert_track(track: Dict[str, Any]) -> None:
     if not track or not track.get("id") or not (
@@ -150,234 +155,236 @@ def upsert_track(track: Dict[str, Any]) -> None:
         source = "deezer" if str(track["id"]).startswith("dz_") else "soundcloud"
 
     c = _con()
-    try:
-        c.execute(
-            """
-            INSERT INTO tracks_catalog
-            (track_id, title, artist, duration, duration_sec,
-             artwork_url, source_url, source, search_query, first_seen, last_seen)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(track_id) DO UPDATE SET
-                title=excluded.title, artist=excluded.artist,
-                duration=excluded.duration, duration_sec=excluded.duration_sec,
-                artwork_url=COALESCE(excluded.artwork_url, tracks_catalog.artwork_url),
-                source_url=excluded.source_url, source=excluded.source,
-                search_query=COALESCE(excluded.search_query, tracks_catalog.search_query),
-                last_seen=excluded.last_seen
-            """,
-            (track["id"], track.get("title", "Без названия"),
-             track.get("artist", "Unknown"), track.get("duration"),
-             int(track.get("duration_sec") or 0), track.get("artwork_url"),
-             track.get("url") or track.get("source_url"),
-             source, track.get("search_query"), now, now),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        """
+        INSERT INTO tracks_catalog
+        (track_id, title, artist, duration, duration_sec,
+         artwork_url, source_url, source, search_query, first_seen, last_seen)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(track_id) DO UPDATE SET
+            title=excluded.title, artist=excluded.artist,
+            duration=excluded.duration, duration_sec=excluded.duration_sec,
+            artwork_url=COALESCE(excluded.artwork_url, tracks_catalog.artwork_url),
+            source_url=excluded.source_url, source=excluded.source,
+            search_query=COALESCE(excluded.search_query, tracks_catalog.search_query),
+            last_seen=excluded.last_seen
+        """,
+        (track["id"], track.get("title", "Без названия"),
+         track.get("artist", "Unknown"), track.get("duration"),
+         int(track.get("duration_sec") or 0), track.get("artwork_url"),
+         track.get("url") or track.get("source_url"),
+         source, track.get("search_query"), now, now),
+    )
+    c.commit()
 
 
 def upsert_tracks(tracks: List[Dict[str, Any]]) -> None:
+    if not tracks:
+        return
+    now = int(time.time())
+    c = _con()
+    rows = []
     for track in tracks:
-        upsert_track(track)
+        if not track or not track.get("id") or not (
+            track.get("url") or track.get("source_url")
+        ):
+            continue
+        source = track.get("source")
+        if not source:
+            source = "deezer" if str(track["id"]).startswith("dz_") else "soundcloud"
+        rows.append((
+            track["id"], track.get("title", "Без названия"),
+            track.get("artist", "Unknown"), track.get("duration"),
+            int(track.get("duration_sec") or 0), track.get("artwork_url"),
+            track.get("url") or track.get("source_url"),
+            source, track.get("search_query"), now, now,
+        ))
+    if rows:
+        c.executemany(
+            """
+            INSERT INTO tracks_catalog
+            (track_id, title, artist, duration, duration_sec,
+             artwork_url, source_url, source, search_query,
+             first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(track_id) DO UPDATE SET
+                title=excluded.title, artist=excluded.artist,
+                duration=excluded.duration,
+                duration_sec=excluded.duration_sec,
+                artwork_url=COALESCE(excluded.artwork_url,
+                                     tracks_catalog.artwork_url),
+                source_url=excluded.source_url,
+                source=excluded.source,
+                search_query=COALESCE(excluded.search_query,
+                                      tracks_catalog.search_query),
+                last_seen=excluded.last_seen
+            """,
+            rows,
+        )
+        c.commit()
 
 
 def get_track(track_id: str) -> Optional[Dict[str, Any]]:
     c = _con()
-    try:
-        row = c.execute(
-            """SELECT track_id AS id, title, artist, duration, duration_sec,
-                      artwork_url, source_url, source, search_query
-               FROM tracks_catalog WHERE track_id=?""",
-            (track_id,),
-        ).fetchone()
-        return dict(row) if row else None
-    finally:
-        c.close()
+    row = c.execute(
+        """SELECT track_id AS id, title, artist, duration, duration_sec,
+                  artwork_url, source_url, source, search_query
+           FROM tracks_catalog WHERE track_id=?""",
+        (track_id,),
+    ).fetchone()
+    return dict(row) if row else None
 
-
-# ────────── favorites ──────────
 
 def add_favorite(user: dict, track: Dict[str, Any]) -> None:
     now = int(time.time())
     _upsert_user(user, now)
     upsert_track(track)
     c = _con()
-    try:
-        c.execute(
-            "INSERT OR REPLACE INTO favorites(user_id, track_id, added_at) VALUES(?,?,?)",
-            (user["id"], track["id"], now),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        "INSERT OR REPLACE INTO favorites(user_id, track_id, added_at) VALUES(?,?,?)",
+        (user["id"], track["id"], now),
+    )
+    c.commit()
 
 
 def remove_favorite(user_id: int, track_id: str) -> None:
     c = _con()
-    try:
-        c.execute(
-            "DELETE FROM favorites WHERE user_id=? AND track_id=?",
-            (user_id, track_id),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        "DELETE FROM favorites WHERE user_id=? AND track_id=?",
+        (user_id, track_id),
+    )
+    c.commit()
 
 
 def list_favorites(user_id: int) -> List[Dict[str, Any]]:
     c = _con()
-    try:
-        rows = c.execute(
-            """SELECT t.track_id AS id, t.title, t.artist, t.duration,
-                      t.duration_sec, t.artwork_url, t.source_url,
-                      t.source, t.search_query, f.added_at
-               FROM favorites f
-               JOIN tracks_catalog t ON t.track_id = f.track_id
-               WHERE f.user_id=?
-               ORDER BY f.added_at DESC""",
-            (user_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        c.close()
+    rows = c.execute(
+        """SELECT t.track_id AS id, t.title, t.artist, t.duration,
+                  t.duration_sec, t.artwork_url, t.source_url,
+                  t.source, t.search_query, f.added_at
+           FROM favorites f
+           JOIN tracks_catalog t ON t.track_id = f.track_id
+           WHERE f.user_id=?
+           ORDER BY f.added_at DESC""",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
-
-# ────────── playlists ──────────
 
 def create_playlist(user_id: int, name: str) -> str:
     pl_id = str(uuid.uuid4())
     now = int(time.time())
     c = _con()
-    try:
-        c.execute(
-            "INSERT INTO playlists(id, user_id, name, created_at) VALUES(?,?,?,?)",
-            (pl_id, user_id, name, now),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        "INSERT INTO playlists(id, user_id, name, created_at) VALUES(?,?,?,?)",
+        (pl_id, user_id, name, now),
+    )
+    c.commit()
     return pl_id
 
 
 def delete_playlist(user_id: int, playlist_id: str) -> bool:
     c = _con()
-    try:
-        pl = c.execute(
-            "SELECT 1 FROM playlists WHERE id=? AND user_id=?",
-            (playlist_id, user_id),
-        ).fetchone()
-        if not pl:
-            return False
-        c.execute("DELETE FROM playlist_tracks WHERE playlist_id=?", (playlist_id,))
-        c.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
-        c.commit()
-        return True
-    finally:
-        c.close()
+    pl = c.execute(
+        "SELECT 1 FROM playlists WHERE id=? AND user_id=?",
+        (playlist_id, user_id),
+    ).fetchone()
+    if not pl:
+        return False
+    c.execute("DELETE FROM playlist_tracks WHERE playlist_id=?", (playlist_id,))
+    c.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
+    c.commit()
+    return True
 
 
 def list_playlists(user_id: int) -> List[Dict[str, Any]]:
     c = _con()
-    try:
-        rows = c.execute(
-            """SELECT p.id, p.name, p.created_at,
-                      COUNT(pt.track_id) AS track_count
-               FROM playlists p
-               LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
-               WHERE p.user_id=?
-               GROUP BY p.id
-               ORDER BY p.created_at DESC""",
-            (user_id,),
-        ).fetchall()
+    rows = c.execute(
+        """SELECT p.id, p.name, p.created_at,
+                  COUNT(pt.track_id) AS track_count
+           FROM playlists p
+           LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+           WHERE p.user_id=?
+           GROUP BY p.id
+           ORDER BY p.created_at DESC""",
+        (user_id,),
+    ).fetchall()
 
-        result = []
-        for pl in rows:
-            arts = c.execute(
-                """SELECT pt.track_id
-                   FROM playlist_tracks pt
-                   WHERE pt.playlist_id=?
-                   ORDER BY pt.position LIMIT 4""",
-                (pl["id"],),
-            ).fetchall()
-            result.append({
-                "id": pl["id"],
-                "name": pl["name"],
-                "track_count": pl["track_count"],
-                "created_at": pl["created_at"],
-                "artworks": [f"/api/artwork/{r['track_id']}" for r in arts],
-            })
-        return result
-    finally:
-        c.close()
+    result = []
+    for pl in rows:
+        arts = c.execute(
+            """SELECT pt.track_id
+               FROM playlist_tracks pt
+               WHERE pt.playlist_id=?
+               ORDER BY pt.position LIMIT 4""",
+            (pl["id"],),
+        ).fetchall()
+        result.append({
+            "id": pl["id"],
+            "name": pl["name"],
+            "track_count": pl["track_count"],
+            "created_at": pl["created_at"],
+            "artworks": [f"/api/artwork/{r['track_id']}" for r in arts],
+        })
+    return result
 
 
 def get_playlist_detail(playlist_id: str) -> Optional[Dict[str, Any]]:
     c = _con()
-    try:
-        pl = c.execute(
-            "SELECT id, user_id, name, created_at FROM playlists WHERE id=?",
-            (playlist_id,),
-        ).fetchone()
-        if not pl:
-            return None
+    pl = c.execute(
+        "SELECT id, user_id, name, created_at FROM playlists WHERE id=?",
+        (playlist_id,),
+    ).fetchone()
+    if not pl:
+        return None
 
-        tracks = c.execute(
-            """SELECT t.track_id AS id, t.title, t.artist, t.duration,
-                      t.duration_sec, t.artwork_url, t.source_url,
-                      t.source, t.search_query
-               FROM playlist_tracks pt
-               JOIN tracks_catalog t ON t.track_id = pt.track_id
-               WHERE pt.playlist_id=?
-               ORDER BY pt.position""",
-            (playlist_id,),
-        ).fetchall()
+    tracks = c.execute(
+        """SELECT t.track_id AS id, t.title, t.artist, t.duration,
+                  t.duration_sec, t.artwork_url, t.source_url,
+                  t.source, t.search_query
+           FROM playlist_tracks pt
+           JOIN tracks_catalog t ON t.track_id = pt.track_id
+           WHERE pt.playlist_id=?
+           ORDER BY pt.position""",
+        (playlist_id,),
+    ).fetchall()
 
-        return {
-            "id": pl["id"],
-            "name": pl["name"],
-            "user_id": pl["user_id"],
-            "tracks": [dict(r) for r in tracks],
-        }
-    finally:
-        c.close()
+    return {
+        "id": pl["id"],
+        "name": pl["name"],
+        "user_id": pl["user_id"],
+        "tracks": [dict(r) for r in tracks],
+    }
 
 
 def add_track_to_playlist(
     playlist_id: str, track_id: str, position: Optional[int] = None
 ) -> None:
     c = _con()
-    try:
-        if position is None:
-            row = c.execute(
-                "SELECT COALESCE(MAX(position),-1)+1 AS pos "
-                "FROM playlist_tracks WHERE playlist_id=?",
-                (playlist_id,),
-            ).fetchone()
-            position = row["pos"]
+    if position is None:
+        row = c.execute(
+            "SELECT COALESCE(MAX(position),-1)+1 AS pos "
+            "FROM playlist_tracks WHERE playlist_id=?",
+            (playlist_id,),
+        ).fetchone()
+        position = row["pos"]
 
-        c.execute(
-            "INSERT OR IGNORE INTO playlist_tracks"
-            "(playlist_id, track_id, position, added_at) VALUES(?,?,?,?)",
-            (playlist_id, track_id, position, int(time.time())),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        "INSERT OR IGNORE INTO playlist_tracks"
+        "(playlist_id, track_id, position, added_at) VALUES(?,?,?,?)",
+        (playlist_id, track_id, position, int(time.time())),
+    )
+    c.commit()
 
 
 def remove_track_from_playlist(playlist_id: str, track_id: str) -> None:
     c = _con()
-    try:
-        c.execute(
-            "DELETE FROM playlist_tracks WHERE playlist_id=? AND track_id=?",
-            (playlist_id, track_id),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        "DELETE FROM playlist_tracks WHERE playlist_id=? AND track_id=?",
+        (playlist_id, track_id),
+    )
+    c.commit()
 
-
-# ────────── events ──────────
 
 def log_event(
     user: dict, action: str, *,
@@ -389,93 +396,113 @@ def log_event(
     now = int(time.time())
     _upsert_user(user, now)
     c = _con()
-    try:
-        c.execute(
-            "INSERT INTO events"
-            "(ts,user_id,action,source,query,track_id,"
-            "track_title,track_artist,ok,err,ms)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (now, user["id"], action, source, query, track_id,
-             track_title, track_artist,
-             None if ok is None else int(ok),
-             (err[:500] if err else None), ms),
-        )
-        c.execute(
-            "UPDATE users SET total_events=total_events+1,last_seen=? WHERE user_id=?",
-            (now, user["id"]),
-        )
-        c.commit()
-    finally:
-        c.close()
+    c.execute(
+        "INSERT INTO events"
+        "(ts,user_id,action,source,query,track_id,"
+        "track_title,track_artist,ok,err,ms)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (now, user["id"], action, source, query, track_id,
+         track_title, track_artist,
+         None if ok is None else int(ok),
+         (err[:500] if err else None), ms),
+    )
+    c.execute(
+        "UPDATE users SET total_events=total_events+1,last_seen=? WHERE user_id=?",
+        (now, user["id"]),
+    )
+    c.commit()
 
-
-# ────────── admin stats ──────────
 
 def unique_users(since: int) -> int:
     c = _con()
-    try:
-        r = c.execute(
-            "SELECT COUNT(DISTINCT user_id) AS v FROM events WHERE ts>=?",
-            (since,),
-        ).fetchone()
-        return int(r["v"] or 0)
-    finally:
-        c.close()
+    r = c.execute(
+        "SELECT COUNT(DISTINCT user_id) AS v FROM events WHERE ts>=?",
+        (since,),
+    ).fetchone()
+    return int(r["v"] or 0)
 
 
 def new_users(since: int) -> int:
     c = _con()
-    try:
-        r = c.execute(
-            "SELECT COUNT(*) AS v FROM users WHERE first_seen>=?", (since,),
-        ).fetchone()
-        return int(r["v"] or 0)
-    finally:
-        c.close()
+    r = c.execute(
+        "SELECT COUNT(*) AS v FROM users WHERE first_seen>=?", (since,),
+    ).fetchone()
+    return int(r["v"] or 0)
 
 
 def count_action(action: str, since: int) -> int:
     c = _con()
-    try:
-        r = c.execute(
-            "SELECT COUNT(*) AS v FROM events WHERE action=? AND ts>=?",
-            (action, since),
-        ).fetchone()
-        return int(r["v"] or 0)
-    finally:
-        c.close()
+    r = c.execute(
+        "SELECT COUNT(*) AS v FROM events WHERE action=? AND ts>=?",
+        (action, since),
+    ).fetchone()
+    return int(r["v"] or 0)
 
 
 def top_queries(since: int, limit: int = 10) -> List[Tuple[str, int]]:
     c = _con()
-    try:
-        rows = c.execute(
-            "SELECT query,COUNT(*) AS v FROM events "
-            "WHERE ts>=? AND action='search' AND query IS NOT NULL "
-            "GROUP BY query ORDER BY v DESC LIMIT ?",
-            (since, limit),
-        ).fetchall()
-        return [(r["query"], int(r["v"])) for r in rows]
-    finally:
-        c.close()
+    rows = c.execute(
+        "SELECT query,COUNT(*) AS v FROM events "
+        "WHERE ts>=? AND action='search' AND query IS NOT NULL "
+        "GROUP BY query ORDER BY v DESC LIMIT ?",
+        (since, limit),
+    ).fetchall()
+    return [(r["query"], int(r["v"])) for r in rows]
 
 
 def top_tracks(since: int, limit: int = 10) -> List[Tuple[str, int]]:
     c = _con()
-    try:
-        rows = c.execute(
-            "SELECT COALESCE(track_title,'?')||' — '||"
-            "COALESCE(track_artist,'?') AS name, COUNT(*) AS v "
-            "FROM events "
-            "WHERE ts>=? AND action IN('stream','download_success') "
-            "AND track_id IS NOT NULL "
-            "GROUP BY track_title,track_artist ORDER BY v DESC LIMIT ?",
-            (since, limit),
-        ).fetchall()
-        return [(r["name"], int(r["v"])) for r in rows]
-    finally:
-        c.close()
+    rows = c.execute(
+        "SELECT COALESCE(track_title,'?')||' — '||"
+        "COALESCE(track_artist,'?') AS name, COUNT(*) AS v "
+        "FROM events "
+        "WHERE ts>=? AND action IN('stream','download_success') "
+        "AND track_id IS NOT NULL "
+        "GROUP BY track_title,track_artist ORDER BY v DESC LIMIT ?",
+        (since, limit),
+    ).fetchall()
+    return [(r["name"], int(r["v"])) for r in rows]
 
+# analytics.py — добавить в конец, перед admin stats
+
+def rename_playlist(user_id: int, playlist_id: str, name: str) -> bool:
+    c = _con()
+    pl = c.execute(
+        "SELECT user_id FROM playlists WHERE id=?",
+        (playlist_id,),
+    ).fetchone()
+    if not pl or pl["user_id"] != user_id:
+        return False
+    c.execute("UPDATE playlists SET name=? WHERE id=?", (name, playlist_id))
+    c.commit()
+    return True
+
+
+def reorder_playlist(playlist_id: str, track_ids: list) -> None:
+    c = _con()
+    for pos, tid in enumerate(track_ids):
+        c.execute(
+            "UPDATE playlist_tracks SET position=? "
+            "WHERE playlist_id=? AND track_id=?",
+            (pos, playlist_id, tid),
+        )
+    c.commit()
+
+
+def get_listening_history(user_id: int, limit: int = 50) -> List[str]:
+    """Вернуть track_id последних прослушанных (без дублей)."""
+    c = _con()
+    rows = c.execute(
+        """SELECT track_id, MAX(ts) as last_played
+           FROM events
+           WHERE user_id=? AND action='stream'
+             AND track_id IS NOT NULL
+           GROUP BY track_id
+           ORDER BY last_played DESC
+           LIMIT ?""",
+        (user_id, limit),
+    ).fetchall()
+    return [row["track_id"] for row in rows]
 
 def fmt_pct(n: int, d: int) -> str:
     return "0 %" if d <= 0 else f"{n * 100.0 / d:.0f} %"

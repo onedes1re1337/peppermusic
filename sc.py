@@ -26,7 +26,21 @@ if not _HAS_FFMPEG:
 _tracks: Dict[str, Dict[str, Any]] = {}
 
 _audio_cache: "OrderedDict[str, Tuple[bytes, str, float]]" = OrderedDict()
-_CACHE_MAX = 50
+_CACHE_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
+_cache_current_bytes = 0
+
+
+def _cache_put(track_id: str, data: bytes, ct: str):
+    global _cache_current_bytes
+
+    _audio_cache[track_id] = (data, ct, time.time())
+    _cache_current_bytes += len(data)
+
+    # Вытесняем старые пока не влезем в лимит
+    while _cache_current_bytes > _CACHE_MAX_BYTES and _audio_cache:
+        _, (old_data, _, _) = _audio_cache.popitem(last=False)
+        _cache_current_bytes -= len(old_data)
+
 _CACHE_TTL = 3600
 
 _MIME_MAP = {
@@ -463,6 +477,7 @@ async def _dl_youtube_direct(url: str) -> Tuple[bytes, str]:
 # ───────── unified download ─────────
 
 async def get_audio(track_id: str) -> Tuple[bytes, str]:
+    global _cache_current_bytes
     now = time.time()
 
     if track_id in _audio_cache:
@@ -470,7 +485,9 @@ async def get_audio(track_id: str) -> Tuple[bytes, str]:
         if now - ts < _CACHE_TTL:
             _audio_cache.move_to_end(track_id)
             return data, ct
+        # Просроченная запись — удаляем с учётом байтов
         del _audio_cache[track_id]
+        _cache_current_bytes -= len(data)
 
     track = _tracks.get(track_id)
     if not track:
@@ -479,7 +496,6 @@ async def get_audio(track_id: str) -> Tuple[bytes, str]:
     source = track.get("source", "soundcloud")
 
     if source == "youtube":
-        # YouTube Music — прямой URL, скачиваем без повторного поиска
         data, ct = await _dl_youtube_direct(track["url"])
     elif source == "deezer":
         query = (
@@ -491,12 +507,10 @@ async def get_audio(track_id: str) -> Tuple[bytes, str]:
     else:
         data, ct = await _dl_soundcloud(track["url"])
 
-    _audio_cache[track_id] = (data, ct, now)
-    while len(_audio_cache) > _CACHE_MAX:
-        _audio_cache.popitem(last=False)
+    # Используем _cache_put вместо ручной вставки
+    _cache_put(track_id, data, ct)
 
     return data, ct
-
 
 async def get_mp3(track_id: str) -> Tuple[bytes, str]:
     return await get_audio(track_id)

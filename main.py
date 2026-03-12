@@ -3,6 +3,7 @@ import logging
 import time
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
+from utils import retry_async
 
 import aiohttp
 import uvicorn
@@ -21,6 +22,8 @@ from aiogram.types import (
     MenuButtonWebApp,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from collections import OrderedDict
 
 from config import (
     BOT_TOKEN, WEBAPP_URL, DEV_MODE,
@@ -126,6 +129,58 @@ def _ensure_track(track_id: str) -> dict | None:
         ),
     })
 
+_search_cache: "OrderedDict[str, tuple[list, float]]" = OrderedDict()
+_SEARCH_CACHE_MAX = 100
+_SEARCH_CACHE_TTL = 120  # 2 минуты
+
+
+def _get_cached_search(key: str) -> list | None:
+    if key in _search_cache:
+        tracks, ts = _search_cache[key]
+        if time.time() - ts < _SEARCH_CACHE_TTL:
+            _search_cache.move_to_end(key)
+            return tracks
+        del _search_cache[key]
+    return None
+
+
+def _set_cached_search(key: str, tracks: list):
+    _search_cache[key] = (tracks, time.time())
+    while len(_search_cache) > _SEARCH_CACHE_MAX:
+        _search_cache.popitem(last=False)
+
+# ------------- трекинг здоровья источников
+
+_source_health: dict[str, dict] = {
+    "soundcloud": {"fails": 0, "last_fail": 0, "disabled_until": 0},
+    "youtube":    {"fails": 0, "last_fail": 0, "disabled_until": 0},
+    "deezer":     {"fails": 0, "last_fail": 0, "disabled_until": 0},
+}
+_FAIL_THRESHOLD = 5       # подряд
+_DISABLE_DURATION = 60    # секунд
+
+
+def _source_available(name: str) -> bool:
+    h = _source_health.get(name)
+    if not h:
+        return True
+    if h["disabled_until"] > time.time():
+        return False
+    return True
+
+
+def _source_fail(name: str):
+    h = _source_health[name]
+    h["fails"] += 1
+    h["last_fail"] = time.time()
+    if h["fails"] >= _FAIL_THRESHOLD:
+        h["disabled_until"] = time.time() + _DISABLE_DURATION
+        log.warning("Source %s disabled for %ds", name, _DISABLE_DURATION)
+
+
+def _source_ok(name: str):
+    _source_health[name]["fails"] = 0
+    _source_health[name]["disabled_until"] = 0
 
 # ───────── Bot ─────────
 
@@ -244,20 +299,29 @@ async def api_search(
     user: dict = Depends(get_user),
 ):
     t0 = time.monotonic()
+
+    # ── Кэш ──
+    cache_key = f"{source}:{q.lower().strip()}"
+    cached = _get_cached_search(cache_key)
+    if cached is not None:
+        fav_ids = {t["id"] for t in db.list_favorites(user["id"])}
+        return {
+            "query": q, "count": len(cached),
+            "tracks": [_public_track({**t, "is_favorite": t["id"] in fav_ids})
+                       for t in cached],
+        }
+
     tasks, labels = [], []
 
-    # ── Порядок: SoundCloud → YouTube → Deezer ──
-
-    if source in ("all", "soundcloud"):
+    if source in ("all", "soundcloud") and _source_available("soundcloud"):
         tasks.append(sc.search(q, limit=30 if source == "all" else 50))
         labels.append("soundcloud")
 
-    # CHANGED: YouTube теперь перед Deezer, лимит увеличен до 20
-    if source in ("all", "youtube") and YTMUSIC_ENABLED:
+    if source in ("all", "youtube") and YTMUSIC_ENABLED and _source_available("youtube"):
         tasks.append(ytmusic.search(q, limit=20 if source == "all" else 50))
         labels.append("youtube")
 
-    if source in ("all", "deezer") and DEEZER_ENABLED:
+    if source in ("all", "deezer") and DEEZER_ENABLED and _source_available("deezer"):
         tasks.append(deezer.search(q, limit=15 if source == "all" else 50))
         labels.append("deezer")
 
@@ -271,7 +335,9 @@ async def api_search(
         if isinstance(result, Exception):
             log.warning("Search [%s] error: %s", label, result)
             errors.append(f"{label}: {result}")
+            _source_fail(label)
             continue
+        _source_ok(label)
         if label in ("deezer", "youtube"):
             for t in result:
                 sc.remember_track(t)
@@ -286,6 +352,9 @@ async def api_search(
     except Exception as exc:
         log.warning("upsert_tracks: %s", exc)
 
+    # ── Сохраняем в кэш ──
+    _set_cached_search(cache_key, tracks)
+
     ms = int((time.monotonic() - t0) * 1000)
     db.log_event(user, "search" if tracks else "empty_results", query=q, ok=True, ms=ms)
     fav_ids = {t["id"] for t in db.list_favorites(user["id"])}
@@ -293,7 +362,6 @@ async def api_search(
         "query": q, "count": len(tracks),
         "tracks": [_public_track({**t, "is_favorite": t["id"] in fav_ids}) for t in tracks],
     }
-
 
 # ───────── Favorites ─────────
 
@@ -539,7 +607,7 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
 
             # 1. SoundCloud (приоритет)
             try:
-                results = await sc.search(query, limit=10)
+                results = await retry_async(sc.search, query, limit=10, retries=2)
                 best = _pick_best(results, ym_track)
                 if best:
                     return best
@@ -548,7 +616,7 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
 
             # 2. YouTube Music
             try:
-                results = await ytmusic.search(query, limit=10)
+                results = await retry_async(ytmusic.search, query, limit=10, retries=2)
                 best = _pick_best(results, ym_track, min_text_score=0.25)
                 if best:
                     return best
@@ -557,7 +625,7 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
 
             # 3. Deezer (fallback)
             try:
-                results = await deezer.search(query, limit=10)
+                results = await retry_async(deezer.search, query, limit=10, retries=2)
                 best = _pick_best(results, ym_track)
                 if best:
                     return best
@@ -590,29 +658,64 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
         "imported": imported,
     }
 
-# ───────── Artwork / Stream / Send ─────────
+
+_art_cache: "OrderedDict[str, tuple[bytes, str, float]]" = OrderedDict()
+_ART_CACHE_MAX = 200
+_ART_CACHE_TTL = 3600  # 1 час
+
 
 @app.get("/api/artwork/{track_id}")
 async def api_artwork(track_id: str, user: dict = Depends(get_user)):
+    now = time.time()
+
+    # Кэш
+    if track_id in _art_cache:
+        data, mt, ts = _art_cache[track_id]
+        if now - ts < _ART_CACHE_TTL:
+            _art_cache.move_to_end(track_id)
+            return Response(
+                content=data, media_type=mt,
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
+        del _art_cache[track_id]
+
     track = _ensure_track(track_id)
     if not track:
         raise HTTPException(404)
+
     url = track.get("artwork_url")
     if not url:
-        return Response(content=FALLBACK_ART_SVG, media_type="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=86400"})
+        return Response(
+            content=FALLBACK_ART_SVG, media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
+            async with s.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as r:
                 if r.status >= 400:
                     raise RuntimeError()
                 data = await r.read()
-                mt = r.headers.get("Content-Type", "image/jpeg").split(";")[0]
+                mt = r.headers.get(
+                    "Content-Type", "image/jpeg"
+                ).split(";")[0]
     except Exception:
-        return Response(content=FALLBACK_ART_SVG, media_type="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=86400"})
-    return Response(content=data, media_type=mt,
-                    headers={"Cache-Control": "public, max-age=3600"})
+        return Response(
+            content=FALLBACK_ART_SVG, media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    # Сохраняем в кэш
+    _art_cache[track_id] = (data, mt, now)
+    while len(_art_cache) > _ART_CACHE_MAX:
+        _art_cache.popitem(last=False)
+
+    return Response(
+        content=data, media_type=mt,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.get("/api/stream/{track_id}")
@@ -671,6 +774,108 @@ async def api_send(track_id: str, user: dict = Depends(get_user)):
     ms = int((time.monotonic() - t0) * 1000)
     db.log_event(user, "download_success", track_id=track_id,
                  track_title=track["title"], track_artist=track["artist"], ok=True, ms=ms)
+    return {"ok": True}
+
+# main.py
+
+@app.get("/api/history")
+async def api_history(
+    limit: int = Query(50, ge=1, le=200),
+    user: dict = Depends(get_user),
+):
+    """Последние прослушанные треки."""
+    track_ids = db.get_listening_history(user["id"], limit)
+
+    fav_ids = {t["id"] for t in db.list_favorites(user["id"])}
+    tracks = []
+    for tid in track_ids:
+        track = _ensure_track(tid)
+        if track:
+            tracks.append(
+                _public_track({**track, "is_favorite": track["id"] in fav_ids})
+            )
+
+    return {"tracks": tracks}
+
+
+@app.patch("/api/playlists/{playlist_id}")
+async def api_rename_playlist(
+    playlist_id: str,
+    request: Request,
+    user: dict = Depends(get_user),
+):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+
+    ok = db.rename_playlist(user["id"], playlist_id, name)
+    if not ok:
+        raise HTTPException(404, "Playlist not found")
+    return {"ok": True}
+
+
+@app.put("/api/playlists/{playlist_id}/reorder")
+async def api_reorder_playlist(
+    playlist_id: str,
+    request: Request,
+    user: dict = Depends(get_user),
+):
+    body = await request.json()
+    track_ids = body.get("track_ids", [])
+    if not track_ids:
+        raise HTTPException(400, "track_ids required")
+
+    pl = db.get_playlist_detail(playlist_id)
+    if not pl or pl["user_id"] != user["id"]:
+        raise HTTPException(404)
+
+    db.reorder_playlist(playlist_id, track_ids)
+    return {"ok": True}
+
+
+# main.py — простая in-memory очередь
+
+from collections import defaultdict
+
+_user_queues: dict[int, list[str]] = defaultdict(list)
+
+
+@app.post("/api/queue/add")
+async def api_queue_add(request: Request, user: dict = Depends(get_user)):
+    body = await request.json()
+    track_id = body.get("track_id", "")
+    position = body.get("position", "end")  # "next" или "end"
+    if not track_id or not _ensure_track(track_id):
+        raise HTTPException(404)
+
+    q = _user_queues[user["id"]]
+    if position == "next":
+        q.insert(0, track_id)
+    else:
+        q.append(track_id)
+    return {"ok": True, "queue_length": len(q)}
+
+
+@app.get("/api/queue")
+async def api_queue(user: dict = Depends(get_user)):
+    q = _user_queues.get(user["id"], [])
+    fav_ids = {t["id"] for t in db.list_favorites(user["id"])}
+    tracks = []
+    for tid in q:
+        t = _ensure_track(tid)
+        if t:
+            tracks.append(
+                _public_track({**t, "is_favorite": t["id"] in fav_ids})
+            )
+    return {"tracks": tracks}
+
+
+@app.delete("/api/queue/{track_id}")
+async def api_queue_remove(track_id: str, user: dict = Depends(get_user)):
+    q = _user_queues.get(user["id"], [])
+    if track_id in q:
+        q.remove(track_id)
     return {"ok": True}
 
 
