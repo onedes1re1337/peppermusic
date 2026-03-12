@@ -455,6 +455,24 @@ def _import_match_score(
     backward = len(q_words & f_words) / len(f_words)
     return forward * 0.6 + backward * 0.4
 
+def _import_match_score(
+    query_artist: str,
+    query_title: str,
+    found_artist: str,
+    found_title: str,
+) -> float:
+    q_words = _normalize_import_words(query_artist) | _normalize_import_words(query_title)
+    f_words = _normalize_import_words(found_artist) | _normalize_import_words(found_title)
+    if not q_words or not f_words:
+        return 0.0
+    forward = len(q_words & f_words) / len(q_words)
+    backward = len(q_words & f_words) / len(f_words)
+    return forward * 0.6 + backward * 0.4
+
+
+def _pick_best_import_result(results: list, ym_track: dict, min_text_score: float = 0.3):
+    if not results:
+        return None
 
 def _pick_best_import_result(results: list, ym_track: dict, min_text_score: float = 0.3):
     if not results:
@@ -464,7 +482,24 @@ def _pick_best_import_result(results: list, ym_track: dict, min_text_score: floa
     q_artist = ym_track.get("artist", "")
     q_title = ym_track.get("title", "")
     query_text = f"{q_artist} {q_title}".lower()
+    expected = ym_track.get("duration_sec", 0)
+    q_artist = ym_track.get("artist", "")
+    q_title = ym_track.get("title", "")
+    query_text = f"{q_artist} {q_title}".lower()
 
+    scored = []
+    for t in results:
+        text_score = _import_match_score(
+            q_artist,
+            q_title,
+            t.get("artist", ""),
+            t.get("title", ""),
+        )
+        if expected > 0 and t.get("duration_sec", 0) > 0:
+            diff = abs(t["duration_sec"] - expected)
+            dur_score = max(0, 1.0 - diff / max(expected, 60))
+        else:
+            dur_score = 0.5
     scored = []
     for t in results:
         text_score = _import_match_score(
@@ -485,14 +520,35 @@ def _pick_best_import_result(results: list, ym_track: dict, min_text_score: floa
             if kw in candidate_text and kw not in query_text:
                 penalty += pw
         penalty = min(penalty, _IMPORT_PENALTY_MAX)
+        candidate_text = f"{t.get('title', '')} {t.get('artist', '')}".lower()
+        penalty = 0.0
+        for kw, pw in _IMPORT_PENALTY_KW.items():
+            if kw in candidate_text and kw not in query_text:
+                penalty += pw
+        penalty = min(penalty, _IMPORT_PENALTY_MAX)
 
+        src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
+        total_score = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
+        scored.append((t, total_score, text_score, dur_score, penalty))
         src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
         total_score = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
         scored.append((t, total_score, text_score, dur_score, penalty))
 
     scored.sort(key=lambda x: x[1], reverse=True)
     best, total_s, text_sc, dur_sc, pen = scored[0]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    best, total_s, text_sc, dur_sc, pen = scored[0]
 
+    log.info(
+        "  Match: '%.40s' by '%.30s' [%s] → text=%.2f dur=%.2f pen=%.2f total=%.2f",
+        best.get("title", "?"),
+        best.get("artist", "?"),
+        best.get("source", "?"),
+        text_sc,
+        dur_sc,
+        pen,
+        total_s,
+    )
     log.info(
         "  Match: '%.40s' by '%.30s' [%s] → text=%.2f dur=%.2f pen=%.2f total=%.2f",
         best.get("title", "?"),
@@ -515,9 +571,28 @@ def _pick_best_import_result(results: list, ym_track: dict, min_text_score: floa
             ym_track.get("title", "?"),
         )
         return None
+    if text_sc < min_text_score:
+        log.warning(
+            "  REJECTED (text_score=%.2f < %.2f): '%s - %s' ≠ '%s - %s'",
+            text_sc,
+            min_text_score,
+            best.get("artist", "?"),
+            best.get("title", "?"),
+            ym_track.get("artist", "?"),
+            ym_track.get("title", "?"),
+        )
+        return None
 
     return best
+    return best
 
+
+async def _safe_import_search(func, query, limit):
+    try:
+        return await retry_async(func, query, limit=limit, retries=2)
+    except Exception as e:
+        log.warning("Import search failed (%s): %s", func.__module__, e)
+        return []
 
 async def _safe_import_search(func, query, limit):
     try:
@@ -566,6 +641,12 @@ def _import_tracks_stream(
             "name": playlist_name,
             "source": source_label,
         }) + "\n\n"
+        yield "data: " + _json.dumps({
+            "type": "start",
+            "total": total,
+            "name": playlist_name,
+            "source": source_label,
+        }) + "\n\n"
 
         batch_size = 10
         for batch_start in range(0, total, batch_size):
@@ -595,10 +676,21 @@ def _import_tracks_stream(
                     "track": track_name,
                     "found": track is not None,
                 }) + "\n\n"
+                yield "data: " + _json.dumps({
+                    "type": "progress",
+                    "current": current,
+                    "total": total,
+                    "imported": imported,
+                    "track": track_name,
+                    "found": track is not None,
+                }) + "\n\n"
 
         ms = int((time.monotonic() - t0) * 1000)
         db.log_event(user, source_label, query=source_url, ok=True, ms=ms)
         log.info(
+            "Import [%s]: '%s' → %d/%d tracks in %dms",
+            source_label,
+            playlist_name,
             "Import [%s]: '%s' → %d/%d tracks in %dms",
             source_label,
             playlist_name,
@@ -607,6 +699,14 @@ def _import_tracks_stream(
             ms,
         )
 
+        yield "data: " + _json.dumps({
+            "type": "done",
+            "playlist_id": playlist_id,
+            "name": playlist_name,
+            "total": total,
+            "imported": imported,
+            "source": source_label,
+        }) + "\n\n"
         yield "data: " + _json.dumps({
             "type": "done",
             "playlist_id": playlist_id,
