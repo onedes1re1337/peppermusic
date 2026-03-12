@@ -465,6 +465,13 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
 
     try:
         ym = await yandex_music_parser.fetch_playlist(url, YANDEX_MUSIC_TOKEN or None)
+    except yandex_music_parser.YandexCaptchaError as exc:
+        log.warning("Yandex import blocked by captcha: %s", exc)
+        raise HTTPException(
+            403,
+            "Яндекс Музыка временно заблокировала импорт с сервера captcha-защитой. "
+            "Попробуй позже или используй ссылку с устройства, где плейлист открывается в браузере."
+        )
     except ValueError as exc:
         log.warning("Yandex import validation: %s", exc)
         raise HTTPException(400, str(exc))

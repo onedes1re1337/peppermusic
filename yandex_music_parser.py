@@ -22,6 +22,31 @@ _UA = (
 )
 _API = "https://api.music.yandex.ru"
 
+class YandexCaptchaError(RuntimeError):
+    """Яндекс отдал captcha / антибот-страницу вместо данных."""
+    pass
+
+
+def _clean_yandex_url(url: str) -> str:
+    # Срезаем utm/ref хвосты, чтобы не тащить лишний мусор
+    return re.sub(r"[?#].*$", "", url)
+
+
+def _looks_like_captcha(final_url: str, text: str) -> bool:
+    final_url = (final_url or "").lower()
+    text = (text or "").lower()
+    return (
+        "showcaptcha" in final_url
+        or "smartcaptcha" in text
+        or "form-fb-hint" in text
+        or "<title>400</title>" in text and "captcha" in text
+    )
+
+
+def _looks_like_html_response(content_type: str, text: str) -> bool:
+    ct = (content_type or "").lower()
+    sample = (text or "")[:300].lower()
+    return "text/html" in ct or "<!doctype html" in sample or "<html" in sample
 
 def _parse_classic_url(url: str) -> Tuple[Optional[str], Optional[str]]:
     m = re.search(r'/users/([^/?#]+)/playlists/(\d+)', url)
@@ -63,11 +88,7 @@ def _extract_tracks(result: dict) -> List[Dict[str, Any]]:
 async def _fetch_by_owner_kind(
     owner: str, kind: str, token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Получить плейлист по owner/kind через API.
-    Важно: owner в URL может быть логином (например Kmo117), а API часто ждет uid.
-    Поэтому если owner не числовой, сначала пытаемся резолвить его через users/<login>.
-    """
+    """Получить плейлист по owner/kind через API."""
     headers = {"User-Agent": _UA, "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"OAuth {token}"
@@ -75,50 +96,81 @@ async def _fetch_by_owner_kind(
     owner_for_api = owner
 
     async with aiohttp.ClientSession() as s:
-        # 1. Если owner — логин, пробуем превратить его в uid
+        # 1) Если owner — логин, пробуем зарезолвить в uid
         if not owner.isdigit():
             async with s.get(
                 f"{_API}/users/{owner}",
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    result = data.get("result", data)
-                    uid = (
-                        result.get("uid")
-                        or result.get("id")
-                        or result.get("user", {}).get("uid")
+                text = await r.text()
+                ct = r.headers.get("Content-Type", "")
+
+                if _looks_like_captcha(str(r.url), text):
+                    raise YandexCaptchaError(
+                        "Яндекс запросил captcha при обращении к API профиля."
                     )
-                    if uid:
-                        owner_for_api = str(uid)
-                        log.info("Resolved Yandex owner login '%s' -> uid=%s", owner, owner_for_api)
-                    else:
-                        text = await r.text()
-                        log.warning("Could not extract uid for owner='%s': %s", owner, text[:300])
+
+                if r.status == 200 and not _looks_like_html_response(ct, text):
+                    try:
+                        data = await r.json(content_type=None)
+                    except Exception:
+                        data = None
+
+                    if data:
+                        result = data.get("result", data)
+                        uid = (
+                            result.get("uid")
+                            or result.get("id")
+                            or result.get("user", {}).get("uid")
+                        )
+                        if uid:
+                            owner_for_api = str(uid)
+                            log.info(
+                                "Resolved Yandex owner login '%s' -> uid=%s",
+                                owner, owner_for_api
+                            )
                 else:
-                    text = await r.text()
                     log.warning(
                         "Failed to resolve Yandex owner '%s': status=%s body=%s",
                         owner, r.status, text[:300]
                     )
 
-        # 2. Пробуем запросить плейлист уже по owner_for_api
+        # 2) Идем за самим плейлистом
         async with s.get(
             f"{_API}/users/{owner_for_api}/playlists/{kind}",
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
+            text = await r.text()
+            ct = r.headers.get("Content-Type", "")
+
+            if _looks_like_captcha(str(r.url), text):
+                raise YandexCaptchaError(
+                    "Яндекс заблокировал серверный запрос captcha-защитой."
+                )
+
             if r.status == 404:
                 raise ValueError("Плейлист не найден. Возможно, он приватный.")
+
             if r.status == 401:
                 raise ValueError("Требуется авторизация. Установите YANDEX_MUSIC_TOKEN.")
+
             if r.status != 200:
-                text = await r.text()
                 raise RuntimeError(
-                    f"Yandex API {r.status}: owner={owner} owner_for_api={owner_for_api} kind={kind} body={text[:300]}"
+                    f"Yandex API {r.status}: owner={owner} owner_for_api={owner_for_api} "
+                    f"kind={kind} body={text[:300]}"
                 )
-            data = await r.json()
+
+            if _looks_like_html_response(ct, text):
+                raise YandexCaptchaError(
+                    "Яндекс вернул HTML вместо JSON. Скорее всего сработала антибот-защита."
+                )
+
+            try:
+                data = await r.json(content_type=None)
+            except Exception:
+                raise RuntimeError(f"Не удалось распарсить JSON ответа Яндекса: {text[:300]}")
 
     result = data.get("result", data)
     name = result.get("title") or "Яндекс Музыка"
@@ -145,24 +197,31 @@ async def _resolve_shared_from_html(
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
     }
-    if token:
-        headers["Authorization"] = f"OAuth {token}"
 
+    # В HTML-запрос авторизацию лучше не пихать: она не помогает пройти антибот,
+    # но может делать поведение менее предсказуемым.
     async with aiohttp.ClientSession() as s:
         async with s.get(
-            url, headers=headers, allow_redirects=True,
+            url,
+            headers=headers,
+            allow_redirects=True,
             timeout=aiohttp.ClientTimeout(total=20),
         ) as r:
             final_url = str(r.url)
+            html = await r.text()
+
             log.info("Redirect → %s (status=%d)", final_url, r.status)
+            log.info("HTML length: %d chars", len(html))
+
+            if _looks_like_captcha(final_url, html):
+                raise YandexCaptchaError(
+                    "Яндекс перенаправил запрос на showcaptcha."
+                )
 
             # Проверяем финальный URL
             owner, kind = _parse_classic_url(final_url)
             if owner and kind:
                 return owner, kind, None
-
-            html = await r.text()
-            log.info("HTML length: %d chars", len(html))
 
     # ── Стратегия 1: canonical / og:url ──
     for name, pattern in [
@@ -184,7 +243,7 @@ async def _resolve_shared_from_html(
         log.info("Found uid/kind in HTML body")
         return m.group(1), m.group(2), None
 
-    # ── Стратегия 3: встроенный JSON (var Mu = {...}) ──
+    # ── Стратегия 3: встроенный JSON ──
     for json_pattern in [
         r'var\s+Mu\s*=\s*(\{.+?\});\s*</script>',
         r'window\.__INITIAL_STATE__\s*=\s*(\{.+?\});\s*</script>',
@@ -194,19 +253,21 @@ async def _resolve_shared_from_html(
         if m:
             try:
                 data = json.loads(m.group(1))
-                # Ищем данные плейлиста внутри JSON
                 playlist_data = _find_playlist_in_json(data)
                 if playlist_data:
                     log.info("Found playlist data in embedded JSON")
                     return None, None, playlist_data
-            except (json.JSONDecodeError, Exception) as e:
+            except Exception as e:
                 log.warning("Failed to parse embedded JSON: %s", e)
 
     # ── Стратегия 4: owner.uid + kind ──
     uid_m = re.search(r'"owner"\s*:\s*\{[^}]*?"uid"\s*:\s*"?(\d+)"?', html)
     kind_m = re.search(r'"kind"\s*:\s*(\d+)', html)
     if uid_m and kind_m:
-        log.info("Found uid=%s kind=%s from JSON fragments", uid_m.group(1), kind_m.group(1))
+        log.info(
+            "Found uid=%s kind=%s from JSON fragments",
+            uid_m.group(1), kind_m.group(1)
+        )
         return uid_m.group(1), kind_m.group(1), None
 
     return None, None, None
@@ -242,33 +303,31 @@ async def fetch_playlist(
     Получить треклист плейлиста Яндекс Музыки.
     Поддерживает оба формата URL.
     """
+    url = _clean_yandex_url(url)
     log.info("Yandex Music import: %s (token=%s)", url, "yes" if token else "no")
 
-    # 1. Сначала пробуем классический URL напрямую
+    # 1. Классический формат: /users/OWNER/playlists/KIND
     owner, kind = _parse_classic_url(url)
     if owner and kind:
         try:
             return await _fetch_by_owner_kind(owner, kind, token)
+        except YandexCaptchaError:
+            raise
         except RuntimeError as exc:
-            # Иногда owner в ссылке — логин, а API капризничает.
-            # Тогда пробуем более устойчивый путь через HTML страницы.
             log.warning("Direct classic API fetch failed, fallback to HTML resolve: %s", exc)
 
-    # 2. Универсальный fallback: открываем HTML и пытаемся извлечь owner/kind или встроенные данные
+    # 2. UUID/shared/fallback через HTML
     owner, kind, embedded_data = await _resolve_shared_from_html(url, token)
 
-    # Если нашли данные прямо в HTML
     if embedded_data:
         name = embedded_data.get("title", "Яндекс Музыка")
         tracks = _extract_tracks(embedded_data)
         log.info("Got %d tracks from embedded data", len(tracks))
         return {"name": name, "track_count": len(tracks), "tracks": tracks}
 
-    # Если нашли owner/kind
     if owner and kind:
         return await _fetch_by_owner_kind(owner, kind, token)
 
-    # 3. Ничего не сработало → подсказка
     raise ValueError(
         "Не удалось прочитать плейлист по этой ссылке.\n\n"
         "💡 Попробуйте:\n"
