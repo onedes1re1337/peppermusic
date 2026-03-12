@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import time
-from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from utils import retry_async
 
@@ -23,7 +22,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 from config import (
     BOT_TOKEN, WEBAPP_URL, DEV_MODE,
@@ -277,12 +276,20 @@ if DEV_MODE:
 
 
 async def get_user(request: Request) -> dict:
+    """Обязательная авторизация — 401 если не прошла."""
     raw = (request.headers.get("x-init-data")
            or request.query_params.get("init_data", ""))
     user = validate_init_data(raw)
     if not user:
         raise HTTPException(401, "Unauthorized")
     return user
+
+
+def _try_get_user(request: Request) -> dict | None:
+    """Мягкая авторизация — None если не прошла (не бросает 401)."""
+    raw = (request.headers.get("x-init-data")
+           or request.query_params.get("init_data", ""))
+    return validate_init_data(raw)
 
 
 # ───────── Search ─────────
@@ -665,10 +672,10 @@ _ART_CACHE_TTL = 3600  # 1 час
 
 
 @app.get("/api/artwork/{track_id}")
-async def api_artwork(track_id: str, user: dict = Depends(get_user)):
+async def api_artwork(track_id: str):
+    """Публичный эндпоинт — браузер запрашивает через <img src>."""
     now = time.time()
 
-    # Кэш
     if track_id in _art_cache:
         data, mt, ts = _art_cache[track_id]
         if now - ts < _ART_CACHE_TTL:
@@ -707,7 +714,6 @@ async def api_artwork(track_id: str, user: dict = Depends(get_user)):
             headers={"Cache-Control": "public, max-age=86400"},
         )
 
-    # Сохраняем в кэш
     _art_cache[track_id] = (data, mt, now)
     while len(_art_cache) > _ART_CACHE_MAX:
         _art_cache.popitem(last=False)
@@ -719,17 +725,28 @@ async def api_artwork(track_id: str, user: dict = Depends(get_user)):
 
 
 @app.get("/api/stream/{track_id}")
-async def api_stream(track_id: str, request: Request, user: dict = Depends(get_user)):
+async def api_stream(track_id: str, request: Request):
+    """Аудиопоток — auth мягкий, потому что <audio src> не шлёт заголовки."""
     track = _ensure_track(track_id)
     if not track:
         raise HTTPException(404)
     try:
         audio_data, content_type = await sc.get_audio(track_id)
     except Exception as exc:
-        db.log_event(user, "stream_error", track_id=track_id, ok=False, err=str(exc))
+        # Пытаемся залогировать ошибку с юзером если доступен
+        user = _try_get_user(request)
+        if user:
+            db.log_event(user, "stream_error", track_id=track_id,
+                         ok=False, err=str(exc))
         raise HTTPException(500, str(exc))
-    db.log_event(user, "stream", track_id=track_id,
-                 track_title=track["title"], track_artist=track["artist"], ok=True)
+
+    # Аналитика — если юзер опознан
+    user = _try_get_user(request)
+    if user:
+        db.log_event(user, "stream", track_id=track_id,
+                     track_title=track["title"], track_artist=track["artist"],
+                     ok=True)
+
     total = len(audio_data)
     rng = request.headers.get("range")
     if rng:
@@ -743,7 +760,8 @@ async def api_stream(track_id: str, request: Request, user: dict = Depends(get_u
                                  "Accept-Ranges": "bytes",
                                  "Content-Length": str(end - start + 1)})
     return Response(content=audio_data, media_type=content_type,
-                    headers={"Accept-Ranges": "bytes", "Content-Length": str(total)})
+                    headers={"Accept-Ranges": "bytes",
+                             "Content-Length": str(total)})
 
 
 @app.post("/api/send/{track_id}")
@@ -776,7 +794,6 @@ async def api_send(track_id: str, user: dict = Depends(get_user)):
                  track_title=track["title"], track_artist=track["artist"], ok=True, ms=ms)
     return {"ok": True}
 
-# main.py
 
 @app.get("/api/history")
 async def api_history(
@@ -833,10 +850,6 @@ async def api_reorder_playlist(
     db.reorder_playlist(playlist_id, track_ids)
     return {"ok": True}
 
-
-# main.py — простая in-memory очередь
-
-from collections import defaultdict
 
 _user_queues: dict[int, list[str]] = defaultdict(list)
 
