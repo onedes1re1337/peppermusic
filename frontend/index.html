@@ -1049,6 +1049,9 @@
       showStatus("💔", "Пока нет избранных треков.<br><small>Жми на сердечко — и трек сохранится.</small>");
       return;
     }
+
+    $list._tracks = favoriteTracks;
+    $list._source = "favorites";
     
     // Добавляем поле быстрого поиска только для избранного
     const searchInputHtml = `
@@ -1652,18 +1655,32 @@
     if (!name) return;
     $newPlSubmit.disabled = true;
     try {
-      await api("POST", "/api/playlists", { name });
+      const data = await api("POST", "/api/playlists", { name });
       toast("✅", `Плейлист «${name}» создан`);
       $newPlName.value = "";
       closeModal($modalCreatePl);
       await loadPlaylists();
+
+      // ── NEW: автоматически добавить трек, если нажали "+" ──
+      if (pendingTrackForPlaylist && data.id) {
+        try {
+          await api("POST", `/api/playlists/${data.id}/tracks`, {
+            track_id: pendingTrackForPlaylist.id,
+          });
+          toast("🎵", `Трек добавлен в «${name}»`);
+          await loadPlaylists();
+        } catch (e) {
+          toast("❌", "Плейлист создан, но трек не добавлен");
+        }
+        pendingTrackForPlaylist = null;
+      }
     } catch (e) {
       toast("❌", e.message || "Ошибка создания");
     } finally {
       $newPlSubmit.disabled = false;
     }
   });
-
+  
   // ── Source chips ──
   document.querySelectorAll(".source-chip").forEach((chip) => {
     chip.addEventListener("click", () => {

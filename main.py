@@ -795,25 +795,6 @@ async def api_send(track_id: str, user: dict = Depends(get_user)):
     return {"ok": True}
 
 
-@app.get("/api/history")
-async def api_history(
-    limit: int = Query(50, ge=1, le=200),
-    user: dict = Depends(get_user),
-):
-    """Последние прослушанные треки."""
-    track_ids = db.get_listening_history(user["id"], limit)
-
-    fav_ids = {t["id"] for t in db.list_favorites(user["id"])}
-    tracks = []
-    for tid in track_ids:
-        track = _ensure_track(tid)
-        if track:
-            tracks.append(
-                _public_track({**track, "is_favorite": track["id"] in fav_ids})
-            )
-
-    return {"tracks": tracks}
-
 
 @app.patch("/api/playlists/{playlist_id}")
 async def api_rename_playlist(

@@ -362,12 +362,14 @@ def add_track_to_playlist(
 ) -> None:
     c = _con()
     if position is None:
-        row = c.execute(
-            "SELECT COALESCE(MAX(position),-1)+1 AS pos "
-            "FROM playlist_tracks WHERE playlist_id=?",
+        # Ручное добавление — новый трек наверх,
+        # сдвигаем все существующие вниз на 1
+        c.execute(
+            "UPDATE playlist_tracks SET position = position + 1 "
+            "WHERE playlist_id=?",
             (playlist_id,),
-        ).fetchone()
-        position = row["pos"]
+        )
+        position = 0
 
     c.execute(
         "INSERT OR IGNORE INTO playlist_tracks"
@@ -488,21 +490,6 @@ def reorder_playlist(playlist_id: str, track_ids: list) -> None:
         )
     c.commit()
 
-
-def get_listening_history(user_id: int, limit: int = 50) -> List[str]:
-    """Вернуть track_id последних прослушанных (без дублей)."""
-    c = _con()
-    rows = c.execute(
-        """SELECT track_id, MAX(ts) as last_played
-           FROM events
-           WHERE user_id=? AND action='stream'
-             AND track_id IS NOT NULL
-           GROUP BY track_id
-           ORDER BY last_played DESC
-           LIMIT ?""",
-        (user_id, limit),
-    ).fetchall()
-    return [row["track_id"] for row in rows]
 
 def fmt_pct(n: int, d: int) -> str:
     return "0 %" if d <= 0 else f"{n * 100.0 / d:.0f} %"
