@@ -1617,30 +1617,60 @@
       $importYMSubmit.disabled = !$importYMUrl.value.trim();
     });
 
-    $importYMSubmit.addEventListener("click", async () => {
-      const url = $importYMUrl.value.trim();
-      if (!url) return;
+  $importYMSubmit.addEventListener("click", async () => {
+    const url = $importYMUrl.value.trim();
+    if (!url) return;
 
-      $importYMSubmit.disabled = true;
-      $importYMStatus.textContent = "⏳ Загружаю плейлист и ищу треки... Это может занять до минуты.";
+    $importYMSubmit.disabled = true;
+    $importYMStatus.textContent = "⏳ Запускаю импорт...";
 
-      try {
-        const data = await api("POST", "/api/import/yandex", { url });
-        $importYMStatus.innerHTML = `✅ Импортировано <b>${data.imported}</b> из <b>${data.total}</b> треков`;
-        toast("✅", `«${data.name}» — ${data.imported} треков`);
-        $importYMUrl.value = "";
-        await loadPlaylists();
-        setTimeout(() => {
-          if ($modalImportYM) closeModal($modalImportYM);
-          $importYMStatus.textContent = "";
-        }, 2500);
-      } catch (e) {
-        $importYMStatus.textContent = `❌ ${e.message}`;
-        toast("❌", "Ошибка импорта");
-      } finally {
-        $importYMSubmit.disabled = !$importYMUrl.value.trim();
-      }
-    });
+    try {
+      const data = await api("POST", "/api/import/yandex", { url });
+
+      // Начинаем опрашивать статус
+      const pollInterval = setInterval(async () => {
+        try {
+          const status = await api("GET", `/api/import/yandex/status/${data.task_id}`);
+
+          if (status.status === "running") {
+            const pct = status.total > 0 ? Math.round(status.current / status.total * 100) : 0;
+            const eta = status.current > 10
+              ? Math.round((status.total - status.current) * 0.3)
+              : '...';
+
+            $importYMStatus.innerHTML = `
+              <div style="margin-bottom: 8px;">Импортирую треки: ${status.current} / ${status.total}</div>
+              <div style="height: 6px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden;">
+                <div style="height: 100%; width: ${pct}%; background: linear-gradient(90deg, #7c3aed, #06b6d4); transition: width .3s ease;"></div>
+              </div>
+              <div style="margin-top: 6px; font-size: 12px; color: var(--muted);">
+                Найдено: ${status.imported}  •  Примерно осталось: ${eta} сек
+              </div>
+            `;
+          }
+
+          if (status.status === "done") {
+            clearInterval(pollInterval);
+            $importYMStatus.textContent = `✅ Готово: импортировано ${status.imported} из ${status.total} треков`;
+            toast("✅", `Плейлист «${status.name}» импортирован`);
+            await loadPlaylists();
+            setTimeout(() => closeModal($modalImportYM), 2500);
+          }
+
+          if (status.status === "error") {
+            clearInterval(pollInterval);
+            $importYMStatus.textContent = `❌ Ошибка: ${status.error}`;
+            $importYMSubmit.disabled = false;
+          }
+
+        } catch (_) {}
+      }, 1000);
+
+    } catch (e) {
+      $importYMStatus.textContent = `❌ ${e.message}`;
+      $importYMSubmit.disabled = false;
+    }
+  });
   }
 
   if ($modalImportYM) {
