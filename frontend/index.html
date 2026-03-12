@@ -30,7 +30,7 @@
       --shadow: 0 18px 60px rgba(0,0,0,.36);
       --radius: 22px;
       --radius-sm: 16px;
-      --player-h: 166px;
+      --player-h: 184px;
     }
 
     *{box-sizing:border-box;margin:0;padding:0;}
@@ -279,17 +279,24 @@
     .tag-soundcloud{background:rgba(255,85,0,.15);color:#ff8c4a;}
     .tag-spotify{background:rgba(29,185,84,.15);color:#4ade80;}
 
-    .t-side{display:flex;align-items:center;gap:8px;z-index:1;}
+    .t-side{display:flex;align-items:center;gap:6px;z-index:1;}
 
-    .icon-stack,.icon-btn,.t-fav,.t-add-pl{
+    .icon-stack,.icon-btn,.t-fav,.t-action,.t-add-pl{
       border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);
       display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
       transition:all .15s ease;
     }
-    .t-fav,.t-add-pl{width:38px;height:38px;border-radius:13px;}
-    .t-fav svg,.fav-btn svg{width:18px;height:18px;fill:currentColor;display:block;}
+    .t-fav,.t-action,.t-add-pl{width:38px;height:38px;border-radius:13px;}
+    .t-action{
+      background:linear-gradient(135deg,var(--accent),#5b67ff);border-color:transparent;
+      box-shadow:0 10px 22px rgba(91,103,255,.28);
+    }
+    .t-action svg,.t-fav svg,.t-add-pl svg,.icon-btn svg{width:16px;height:16px;fill:currentColor;}
     .t-fav{color:var(--muted);}
-    .t-fav.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
+    .t-fav.active,.fav-btn.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
+    .t-add-pl{color:var(--muted);}
+    .t-add-pl:hover{color:var(--accent);border-color:rgba(139,92,246,.3);}
+    .track.playing .t-action{background:linear-gradient(135deg,var(--accent-2),#0ea5e9);}
 
     .t-remove-pl {
       width: 38px; height: 38px; border-radius: 13px;
@@ -425,13 +432,13 @@
     .mini-player.hidden{pointer-events:none;}
 
     .player-shell{
-      position:relative;overflow:hidden;border-radius:28px;
+      position:relative;overflow:hidden;border-radius:30px;
       border:1px solid var(--border-strong);
       background:linear-gradient(180deg,rgba(31,46,78,.96),rgba(13,21,38,.98));
-      box-shadow:0 20px 56px rgba(0,0,0,.46),0 0 0 1px rgba(255,255,255,.03) inset,
-                 0 -8px 24px rgba(34,211,238,.05) inset;
+      box-shadow:0 24px 70px rgba(0,0,0,.52),0 0 0 1px rgba(255,255,255,.03) inset,
+                 0 -10px 30px rgba(34,211,238,.05) inset;
       backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
-      padding:10px 10px 9px;
+      padding:12px;
     }
     .player-shell::before{
       content:"";position:absolute;inset:0;
@@ -440,9 +447,9 @@
       pointer-events:none;
     }
 
-    .player-center-row{display:grid;grid-template-columns:64px minmax(0,1fr);gap:12px;align-items:center;}
+    .player-center-row{display:grid;grid-template-columns:72px minmax(0,1fr);gap:14px;align-items:center;}
     .p-art{
-      width:64px;height:64px;border-radius:18px;object-fit:cover;
+      width:72px;height:72px;border-radius:22px;object-fit:cover;
       background:#10192d;border:1px solid rgba(255,255,255,.06);
       box-shadow:0 14px 32px rgba(0,0,0,.34),0 0 0 1px rgba(255,255,255,.03) inset;
     }
@@ -450,23 +457,23 @@
     .p-title{font-weight:800;font-size:15px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .p-artist{margin-top:5px;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-    .player-progress-row{margin-top:9px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;}
+    .player-progress-row{margin-top:12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;}
     .player-progress-wrap{cursor:pointer;min-width:0;}
-    .player-progress-track{height:7px;width:100%;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;box-shadow:inset 0 1px 2px rgba(0,0,0,.2);}
+    .player-progress-track{height:8px;width:100%;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;box-shadow:inset 0 1px 2px rgba(0,0,0,.2);}
     .player-progress-fill{width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent-2));box-shadow:0 0 18px rgba(34,211,238,.25);transition:width .1s linear;}
 
     .player-track-pill{
-      display:inline-flex;align-items:center;gap:7px;min-height:30px;padding:0 10px;
+      display:inline-flex;align-items:center;gap:8px;min-height:34px;padding:0 12px;
       border-radius:999px;white-space:nowrap;
       background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);
-      color:var(--muted);font-size:11px;font-weight:700;
+      color:var(--muted);font-size:12px;font-weight:700;
     }
     .player-pill-dot{width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.22);}
 
     .player-controls-row{
-      margin-top:10px;display:grid;
-      grid-template-columns:38px 38px 52px 38px 38px 38px 38px;
-      gap:8px;align-items:center;justify-content:space-between;
+      margin-top:14px;display:grid;
+      grid-template-columns:38px 38px 52px 38px 38px minmax(80px,1fr) 38px 38px;
+      gap:8px;align-items:center;
     }
 
     .player-icon-btn{
@@ -489,6 +496,13 @@
     .player-main-btn svg{width:20px;height:20px;}
     .icon-play.hidden,.icon-pause.hidden{display:none;}
 
+    .player-volume-inline{
+      height:38px;border-radius:13px;display:grid;grid-template-columns:auto 1fr;
+      align-items:center;gap:8px;padding:0 10px;
+      background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);min-width:0;
+    }
+    .player-volume-label{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.08em;}
+    .volume-slider{width:100%;accent-color:var(--accent-2);cursor:pointer;}
 
     .fav-btn.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
     #btn-dl.ok{color:var(--accent-3);border-color:rgba(34,197,94,.36);}
@@ -590,7 +604,7 @@
     }
     @media(max-width:620px){
       .player-controls-row{
-        grid-template-columns:34px 34px 46px 34px 34px 34px 34px;
+        grid-template-columns:34px 34px 46px 34px 34px 1fr 34px 34px;
         gap:6px;
       }
       .player-icon-btn{width:34px;height:34px;border-radius:11px;}
@@ -601,15 +615,17 @@
       .player-center-row{grid-template-columns:64px minmax(0,1fr);}
     }
     @media(max-width:480px){
-      :root{--player-h:176px;}
-      .player-shell{border-radius:24px;padding:10px 10px 8px;}
+      :root{--player-h:196px;}
+      .player-shell{border-radius:26px;padding:11px;}
       .player-controls-row{
-        grid-template-columns:32px 32px 44px 32px 32px 32px 32px;
+        grid-template-columns:32px 32px 44px 32px 32px 1fr 32px 32px;
         gap:5px;
       }
       .player-icon-btn{width:32px;height:32px;border-radius:10px;}
       .player-icon-btn svg{width:14px;height:14px;}
       .player-main-btn{width:44px;height:44px;border-radius:14px;}
+      .player-volume-inline{padding:0 8px;gap:6px;}
+      .player-volume-label{font-size:9px;}
       .tabs{gap:4px;}
       .tab{padding:10px 6px;font-size:12px;}
     }
@@ -684,7 +700,7 @@
 
       <div class="player-controls-row">
         <button id="btn-shuffle" class="player-icon-btn player-ghost" title="Перемешать" aria-label="Shuffle">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L20.2 3.8M21 16v5h-5M15 15l5.1 5.1M4 4l5 5"/><path d="M16 3h5v5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
 
         <button id="btn-prev" class="player-icon-btn player-ghost" title="Назад" aria-label="Назад">
@@ -704,6 +720,10 @@
           <svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11V9a4 4 0 0 1 4-4h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 23l-4-4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 13v2a4 4 0 0 1-4 4H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
 
+        <div class="player-volume-inline">
+          <span class="player-volume-label">VOL</span>
+          <input id="volume" class="volume-slider" type="range" min="0" max="1" step="0.01" value="1"/>
+        </div>
 
         <button id="btn-dl" class="player-icon-btn player-ghost" title="Отправить в чат" aria-label="Отправить в чат">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -808,6 +828,7 @@
   const $btnRepeat = $("btn-repeat");
   const $btnDL = $("btn-dl");
   const $btnFav = $("btn-fav");
+  const $volume = $("volume");
   const $progressHit = $("progress-hit");
 
   const $modalCreatePl = $("modal-create-pl");
@@ -836,6 +857,7 @@
   const audio = new Audio();
   audio.preload = "auto";
 
+  const STORAGE_KEYS = { volume: "peppermusic:volume" };
 
   const FALLBACK_ART =
     "data:image/svg+xml;charset=UTF-8," +
@@ -848,7 +870,6 @@
   let searchTimer = null;
   let lastTracks = [];
   let favoriteTracks = [];
-  let currentQueueLoop = false;
   let currentQueue = [];
   let currentIndex = -1;
   let activeSource = "all";
@@ -987,10 +1008,9 @@
   }
 
   // ── Queue / Shuffle ──
-  function setQueue(tracks, idx, options = {}) {
+  function setQueue(tracks, idx) {
     currentQueue = [...tracks];
     currentIndex = idx;
-    currentQueueLoop = !!options.loop;
   }
 
   function shuffleArray(arr) {
@@ -1061,6 +1081,7 @@
             </div>
             <div class="t-side">
               <button class="t-fav active" data-id="${esc(String(t.id))}"><svg viewBox="0 0 24 24"><path d="M12 21s-6.716-4.35-9.193-8.091C.812 9.824 2.002 5.5 5.9 4.427 8.161 3.805 10.112 4.75 12 6.7c1.888-1.95 3.839-2.895 6.1-2.273 3.898 1.073 5.088 5.397 3.093 8.482C18.716 16.65 12 21 12 21z"/></svg></button>
+              <button class="t-action">${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}</button>
             </div>
           </article>`;
         }).join("")}
@@ -1081,8 +1102,14 @@
     // Все обработчики используют boundTracks, а не $list._tracks
     listEl.querySelectorAll(".track").forEach((el) => {
       el.addEventListener("click", (e) => {
-        if (e.target.closest(".t-fav")) return;
+        if (e.target.closest(".t-fav") || e.target.closest(".t-action")) return;
         onTrackClick(el, boundTracks);
+      });
+    });
+    listEl.querySelectorAll(".t-action").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onTrackClick(btn.closest(".track"), boundTracks);
       });
     });
     listEl.querySelectorAll(".t-art-wrap").forEach((wrap) => {
@@ -1131,6 +1158,9 @@
             <button class="t-fav${isFav(t.id) ? " active" : ""}" data-id="${esc(String(t.id))}" title="В избранное" aria-label="В избранное">
               <svg viewBox="0 0 24 24"><path d="M12 21s-6.716-4.35-9.193-8.091C.812 9.824 2.002 5.5 5.9 4.427 8.161 3.805 10.112 4.75 12 6.7c1.888-1.95 3.839-2.895 6.1-2.273 3.898 1.073 5.088 5.397 3.093 8.482C18.716 16.65 12 21 12 21z"/></svg>
             </button>
+            <button class="t-action" data-id="${esc(String(t.id))}" aria-label="Play">
+              ${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}
+            </button>
           </div>
         </article>`;
     }).join("");
@@ -1144,11 +1174,17 @@
 
     $list.querySelectorAll(".track").forEach((el) => {
       el.addEventListener("click", (e) => {
-        if (e.target.closest(".t-fav") || e.target.closest(".t-add-pl") || e.target.closest(".t-remove-pl")) return;
+        if (e.target.closest(".t-fav") || e.target.closest(".t-action") || e.target.closest(".t-add-pl") || e.target.closest(".t-remove-pl")) return;
         onTrackClick(el, boundTracks);
       });
     });
 
+    $list.querySelectorAll(".t-action").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onTrackClick(btn.closest(".track"), boundTracks);
+      });
+    });
 
     $list.querySelectorAll(".t-fav").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
@@ -1191,9 +1227,7 @@
       return;
     }
 
-    const source = el.closest("#fav-tracks-list") ? "favorites" : ($list._source || currentView);
-    const shouldLoopQueue = source === "favorites" || source === "playlist";
-    setQueue(tracks, idx, { loop: shouldLoopQueue });
+    setQueue(tracks, idx);
     playTrack(track);
   }
 
@@ -1235,11 +1269,9 @@
       audio.play().catch(console.error);
       return;
     }
-    if (index < 0) {
-      index = (repeatMode === "all" || currentQueueLoop) ? currentQueue.length - 1 : 0;
-    }
+    if (index < 0) index = currentQueue.length - 1;
     if (index >= currentQueue.length) {
-      if (repeatMode === "all" || currentQueueLoop) index = 0;
+      if (repeatMode === "all") index = 0;
       else { setPlaying(false); return; }
     }
     currentIndex = index;
@@ -1261,19 +1293,37 @@
     document.querySelectorAll(".track").forEach((el) => {
       const active = cur && String(cur.id) === String(el.dataset.id);
       el.classList.toggle("playing", active);
+      const action = el.querySelector(".t-action");
       const overlay = el.querySelector(".t-play-btn");
-      if (!overlay) return;
+      if (!action || !overlay) return;
       if (active && isPlaying) {
+        action.innerHTML = eqHTML(false);
         overlay.innerHTML = eqHTML(false);
       } else if (active && !isPlaying) {
+        action.innerHTML = eqHTML(true);
         overlay.innerHTML = eqHTML(true);
       } else {
+        action.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>';
         overlay.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>';
       }
     });
     syncFavoriteButtons();
   }
 
+  // ── Volume ──
+  function initVolume() {
+    let vol = 1;
+    try { const raw = localStorage.getItem(STORAGE_KEYS.volume); if (raw !== null) vol = Number(raw); } catch (_) {}
+    if (!Number.isFinite(vol)) vol = 1;
+    vol = Math.max(0, Math.min(1, vol));
+    audio.volume = vol;
+    $volume.value = String(vol);
+    $volume.addEventListener("input", () => {
+      const v = Math.max(0, Math.min(1, Number($volume.value)));
+      audio.volume = v;
+      localStorage.setItem(STORAGE_KEYS.volume, String(v));
+    });
+  }
 
   // ── Search ──
   async function doSearch(query) {
@@ -1379,7 +1429,7 @@
           </button>
           ${tracks.length ? `
             <button class="pl-shuffle-btn" id="pl-shuffle-btn" title="Перемешать">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></svg>
+              <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L20.2 3.8M21 16v5h-5M15 15l5.1 5.1M4 4l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <button class="pl-play-all" id="pl-play-all">▶ Играть</button>
           ` : ""}
@@ -1416,6 +1466,9 @@
               </button>
               <button class="t-remove-pl" data-id="${esc(String(t.id))}" data-plid="${esc(pl.id)}" title="Убрать из плейлиста">
                 <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" y1="11" x2="10" y2="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="11" x2="14" y2="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
+              <button class="t-action" data-id="${esc(String(t.id))}" aria-label="Play">
+                ${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}
               </button>
             </div>
           </article>`;
@@ -1475,14 +1528,14 @@
 
     $("pl-play-all")?.addEventListener("click", () => {
       if (!tracks.length) return;
-      setQueue(tracks, 0, { loop: true });
+      setQueue(tracks, 0);
       playTrack(tracks[0]);
     });
 
     $("pl-shuffle-btn")?.addEventListener("click", () => {
       if (!tracks.length) return;
       const shuffled = shuffleArray(tracks);
-      setQueue(shuffled, 0, { loop: true });
+      setQueue(shuffled, 0);
       playTrack(shuffled[0]);
       toast("🔀", "Перемешано");
     });
@@ -1558,66 +1611,260 @@
     openModal($modalAddToPl);
   }
 
-    // ── Yandex Music import ──
+    // ── Yandex Music import (client beta flow) ──
+  function setYMStatus(message, tone = "muted") {
+    const colors = {
+      muted: "var(--muted)",
+      ok: "#86efac",
+      err: "#fda4af",
+      info: "var(--text)",
+    };
+    $importYMStatus.innerHTML = `<div style="color:${colors[tone] || colors.muted};line-height:1.45;">${message}</div>`;
+  }
+
+  function renderYMProgress(current, total, imported, trackName) {
+    const pct = total > 0 ? Math.max(3, Math.round((current / total) * 100)) : 8;
+    $importYMStatus.innerHTML = `
+      <div style="margin-bottom:8px;color:var(--text);font-weight:700;">Импортирую треки: ${current} / ${total}</div>
+      <div style="height:6px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden;">
+        <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#7c3aed,#06b6d4);transition:width .25s ease;"></div>
+      </div>
+      <div style="margin-top:8px;font-size:12px;color:var(--muted);">Найдено: ${imported} ${trackName ? `• ${esc(trackName)}` : ""}</div>
+    `;
+  }
+
+  function cleanYMUrl(url) {
+    return String(url || "").trim().replace(/[?#].*$/, "");
+  }
+
+  function parseYMClassicUrl(url) {
+    const m = cleanYMUrl(url).match(/music\.yandex\.(?:ru|com)\/users\/([^/]+)\/playlists\/(\d+)/i);
+    return m ? { owner: m[1], kind: m[2] } : null;
+  }
+
+  function safeJSONParse(raw) {
+    try { return JSON.parse(raw); } catch (_) { return null; }
+  }
+
+  function findPlaylistData(node, depth = 0) {
+    if (!node || depth > 12) return null;
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = findPlaylistData(item, depth + 1);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (typeof node !== "object") return null;
+
+    const tracks = node.tracks || node.trackIds || node.items;
+    if (node.title && tracks && (Array.isArray(tracks) || typeof tracks === "object")) {
+      return node;
+    }
+
+    for (const key of Object.keys(node)) {
+      const found = findPlaylistData(node[key], depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function collectYMTrackObjects(node, out = [], depth = 0) {
+    if (!node || depth > 14) return out;
+    if (Array.isArray(node)) {
+      for (const item of node) collectYMTrackObjects(item, out, depth + 1);
+      return out;
+    }
+    if (typeof node !== "object") return out;
+
+    const hasTitle = typeof node.title === "string" && node.title.trim();
+    const hasArtist = typeof node.artist === "string" || Array.isArray(node.artists) || node.artistsName || node.subtitle;
+    const hasDuration = node.durationMs || node.duration || node.durationSec;
+    if (hasTitle && hasArtist && hasDuration) out.push(node);
+
+    for (const key of Object.keys(node)) collectYMTrackObjects(node[key], out, depth + 1);
+    return out;
+  }
+
+  function normalizeYMTrack(raw) {
+    const title = String(raw?.title || "").trim();
+    if (!title) return null;
+
+    let artist = "";
+    if (typeof raw.artist === "string") artist = raw.artist;
+    else if (typeof raw.artistsName === "string") artist = raw.artistsName;
+    else if (typeof raw.subtitle === "string") artist = raw.subtitle;
+    else if (Array.isArray(raw.artists)) {
+      artist = raw.artists.map((a) => a?.name || a?.title || "").filter(Boolean).join(", ");
+    }
+    artist = String(artist || "").trim();
+    if (!artist) return null;
+
+    const durationMs = Number(raw.durationMs || 0);
+    const duration = Number(raw.duration || 0);
+    const durationSec = Number(raw.durationSec || 0) || (durationMs > 0 ? Math.round(durationMs / 1000) : (duration > 0 ? Math.round(duration) : 0));
+
+    return {
+      title,
+      artist,
+      duration_sec: durationSec,
+    };
+  }
+
+  function extractYMPlaylistFromHTML(html, sourceUrl) {
+    const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
+    const pageTitle = titleMatch ? titleMatch[1].replace(/\s*[—|-]\s*Яндекс Музыка.*$/i, "").trim() : "Яндекс Музыка";
+
+    const patterns = [
+      /window\.__INITIAL_STATE__\s*=\s*(\{[\s\S]+?\})\s*;<\/script>/i,
+      /window\.__NEXT_DATA__\s*=\s*(\{[\s\S]+?\})\s*;<\/script>/i,
+      /var\s+Mu\s*=\s*(\{[\s\S]+?\})\s*;<\/script>/i,
+    ];
+
+    let root = null;
+    for (const re of patterns) {
+      const m = html.match(re);
+      if (!m) continue;
+      root = safeJSONParse(m[1]);
+      if (root) break;
+    }
+
+    let playlistNode = root ? findPlaylistData(root) : null;
+    let candidates = [];
+    if (playlistNode) candidates = collectYMTrackObjects(playlistNode);
+    if (!candidates.length && root) candidates = collectYMTrackObjects(root);
+
+    if (!candidates.length) {
+      const fallbackRe = /"title"\s*:\s*"([^"]+)"[\s\S]{0,220}?"artists"\s*:\s*\[(.*?)\][\s\S]{0,220}?(?:"durationMs"\s*:\s*(\d+)|"duration"\s*:\s*(\d+))/g;
+      let m;
+      while ((m = fallbackRe.exec(html)) !== null) {
+        const artistNames = [...m[2].matchAll(/"name"\s*:\s*"([^"]+)"/g)].map((x) => x[1]).join(", ");
+        candidates.push({ title: m[1], artists: artistNames ? artistNames.split(/,\s*/) .map((name) => ({ name })) : [], durationMs: Number(m[3] || 0), duration: Number(m[4] || 0) });
+      }
+    }
+
+    const dedup = new Map();
+    for (const raw of candidates) {
+      const track = normalizeYMTrack(raw);
+      if (!track) continue;
+      const key = `${track.artist}__${track.title}`.toLowerCase();
+      if (!dedup.has(key)) dedup.set(key, track);
+    }
+
+    const tracks = [...dedup.values()];
+    const name = String(playlistNode?.title || pageTitle || "Яндекс Музыка").trim();
+
+    return { name, tracks, url: cleanYMUrl(sourceUrl) };
+  }
+
+  async function fetchYandexPlaylistClient(url) {
+    const cleanUrl = cleanYMUrl(url);
+    const res = await fetch(cleanUrl, {
+      method: "GET",
+      credentials: "include",
+      headers: { "Accept": "text/html,application/xhtml+xml" },
+    });
+
+    const html = await res.text();
+    const finalUrl = res.url || cleanUrl;
+
+    if (res.redirected && /showcaptcha/i.test(finalUrl)) {
+      throw new Error("Яндекс прислал captcha в клиенте. Открой этот плейлист в браузере и попробуй позже.");
+    }
+    if (/showcaptcha|smartcaptcha|form-fb-hint/i.test(finalUrl + "\n" + html.slice(0, 1500))) {
+      throw new Error("Яндекс заблокировал чтение плейлиста captcha-защитой.");
+    }
+    if (!res.ok) {
+      throw new Error(`Яндекс вернул ${res.status}`);
+    }
+
+    const payload = extractYMPlaylistFromHTML(html, cleanUrl);
+    if (!payload.tracks.length) {
+      throw new Error("Не удалось вытащить треки из HTML плейлиста. Возможно, нужен другой формат страницы или логин в Яндексе.");
+    }
+    return payload;
+  }
+
+  async function importYandexClient(url, payload) {
+    const res = await fetch("/api/import/yandex/client", {
+      method: "POST",
+      headers: {
+        "X-Init-Data": INIT_DATA,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url: cleanYMUrl(url),
+        name: payload.name,
+        tracks: payload.tracks,
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
+    }
+    if (!res.body) {
+      throw new Error("Сервер не прислал поток импорта");
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        const dataLine = part.split("\n").find((line) => line.startsWith("data: "));
+        if (!dataLine) continue;
+        let evt;
+        try {
+          evt = JSON.parse(dataLine.slice(6));
+        } catch (_) {
+          continue;
+        }
+
+        if (evt.type === "start") {
+          setYMStatus(`Нашел <b>${evt.total}</b> треков. Начинаю матчинг...`, "info");
+        } else if (evt.type === "progress") {
+          renderYMProgress(evt.current || 0, evt.total || 0, evt.imported || 0, evt.track || "");
+        } else if (evt.type === "done") {
+          setYMStatus(`✅ Готово: импортировано <b>${evt.imported}</b> из <b>${evt.total}</b> треков`, "ok");
+          toast("✅", `Плейлист «${evt.name}» импортирован`);
+          await loadPlaylists();
+          setTimeout(() => closeModal($modalImportYM), 1800);
+        }
+      }
+    }
+  }
+
   if ($importYMUrl && $importYMSubmit && $importYMStatus) {
     $importYMUrl.addEventListener("input", () => {
       $importYMSubmit.disabled = !$importYMUrl.value.trim();
+      if (!$importYMUrl.value.trim()) setYMStatus("");
     });
 
-  $importYMSubmit.addEventListener("click", async () => {
-    const url = $importYMUrl.value.trim();
-    if (!url) return;
+    $importYMSubmit.addEventListener("click", async () => {
+      const url = $importYMUrl.value.trim();
+      if (!url) return;
 
-    $importYMSubmit.disabled = true;
-    $importYMStatus.textContent = "⏳ Запускаю импорт...";
+      $importYMSubmit.disabled = true;
+      setYMStatus("⏳ Читаю страницу Яндекс Музыки в Mini App...", "info");
 
-    try {
-      const data = await api("POST", "/api/import/yandex", { url });
-
-      // Начинаем опрашивать статус
-      const pollInterval = setInterval(async () => {
-        try {
-          const status = await api("GET", `/api/import/yandex/status/${data.task_id}`);
-
-          if (status.status === "running") {
-            const pct = status.total > 0 ? Math.round(status.current / status.total * 100) : 0;
-            const eta = status.current > 10
-              ? Math.round((status.total - status.current) * 0.3)
-              : '...';
-
-            $importYMStatus.innerHTML = `
-              <div style="margin-bottom: 8px;">Импортирую треки: ${status.current} / ${status.total}</div>
-              <div style="height: 6px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden;">
-                <div style="height: 100%; width: ${pct}%; background: linear-gradient(90deg, #7c3aed, #06b6d4); transition: width .3s ease;"></div>
-              </div>
-              <div style="margin-top: 6px; font-size: 12px; color: var(--muted);">
-                Найдено: ${status.imported}  •  Примерно осталось: ${eta} сек
-              </div>
-            `;
-          }
-
-          if (status.status === "done") {
-            clearInterval(pollInterval);
-            $importYMStatus.textContent = `✅ Готово: импортировано ${status.imported} из ${status.total} треков`;
-            toast("✅", `Плейлист «${status.name}» импортирован`);
-            await loadPlaylists();
-            setTimeout(() => closeModal($modalImportYM), 2500);
-          }
-
-          if (status.status === "error") {
-            clearInterval(pollInterval);
-            $importYMStatus.textContent = `❌ Ошибка: ${status.error}`;
-            $importYMSubmit.disabled = false;
-          }
-
-        } catch (_) {}
-      }, 1000);
-
-    } catch (e) {
-      $importYMStatus.textContent = `❌ ${e.message}`;
-      $importYMSubmit.disabled = false;
-    }
-  });
+      try {
+        const payload = await fetchYandexPlaylistClient(url);
+        setYMStatus(`Нашел плейлист <b>${esc(payload.name)}</b> и <b>${payload.tracks.length}</b> треков. Отправляю на импорт...`, "info");
+        await importYandexClient(url, payload);
+      } catch (e) {
+        console.error("yandex import beta", e);
+        setYMStatus(`❌ ${esc(e.message || "Ошибка импорта")}`, "err");
+      } finally {
+        $importYMSubmit.disabled = false;
+      }
+    });
   }
 
   if ($modalImportYM) {
@@ -1799,7 +2046,7 @@
   audio.addEventListener("ended", () => playNext());
 
   // ── Init ──
-  audio.volume = 1;
+  initVolume();
   loadFavorites();
   loadPlaylists();
   if (!HAS_TG) setTimeout(() => $q.focus(), 250);
