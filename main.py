@@ -427,6 +427,208 @@ async def api_remove_from_playlist(
     db.remove_track_from_playlist(playlist_id, track_id)
     return {"ok": True}
 
+
+def _normalize_import_words(s: str) -> set:
+    s = s.lower()
+    s = s.replace("feat.", " ").replace("feat ", " ")
+    s = s.replace("ft.", " ").replace("ft ", " ")
+    s = s.replace("prod.", " ").replace("prod ", " ")
+    for ch in "()[]{}«»\"'.,!?;:—–-/\\|@#$%^&*+=~`":
+        s = s.replace(ch, " ")
+    return {w for w in s.split() if len(w) > 1}
+
+
+def _import_match_score(
+    query_artist: str,
+    query_title: str,
+    found_artist: str,
+    found_title: str,
+) -> float:
+    q_words = _normalize_import_words(query_artist) | _normalize_import_words(query_title)
+    f_words = _normalize_import_words(found_artist) | _normalize_import_words(found_title)
+    if not q_words or not f_words:
+        return 0.0
+    forward = len(q_words & f_words) / len(q_words)
+    backward = len(q_words & f_words) / len(f_words)
+    return forward * 0.6 + backward * 0.4
+
+
+def _pick_best_import_result(results: list, ym_track: dict, min_text_score: float = 0.3):
+    if not results:
+        return None
+
+    expected = ym_track.get("duration_sec", 0)
+    q_artist = ym_track.get("artist", "")
+    q_title = ym_track.get("title", "")
+    query_text = f"{q_artist} {q_title}".lower()
+
+    scored = []
+    for t in results:
+        text_score = _import_match_score(
+            q_artist,
+            q_title,
+            t.get("artist", ""),
+            t.get("title", ""),
+        )
+        if expected > 0 and t.get("duration_sec", 0) > 0:
+            diff = abs(t["duration_sec"] - expected)
+            dur_score = max(0, 1.0 - diff / max(expected, 60))
+        else:
+            dur_score = 0.5
+
+        candidate_text = f"{t.get('title', '')} {t.get('artist', '')}".lower()
+        penalty = 0.0
+        for kw, pw in _IMPORT_PENALTY_KW.items():
+            if kw in candidate_text and kw not in query_text:
+                penalty += pw
+        penalty = min(penalty, _IMPORT_PENALTY_MAX)
+
+        src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
+        total_score = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
+        scored.append((t, total_score, text_score, dur_score, penalty))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    best, total_s, text_sc, dur_sc, pen = scored[0]
+
+    log.info(
+        "  Match: '%.40s' by '%.30s' [%s] → text=%.2f dur=%.2f pen=%.2f total=%.2f",
+        best.get("title", "?"),
+        best.get("artist", "?"),
+        best.get("source", "?"),
+        text_sc,
+        dur_sc,
+        pen,
+        total_s,
+    )
+
+    if text_sc < min_text_score:
+        log.warning(
+            "  REJECTED (text_score=%.2f < %.2f): '%s - %s' ≠ '%s - %s'",
+            text_sc,
+            min_text_score,
+            best.get("artist", "?"),
+            best.get("title", "?"),
+            ym_track.get("artist", "?"),
+            ym_track.get("title", "?"),
+        )
+        return None
+
+    return best
+
+
+async def _safe_import_search(func, query, limit):
+    try:
+        return await retry_async(func, query, limit=limit, retries=2)
+    except Exception as e:
+        log.warning("Import search failed (%s): %s", func.__module__, e)
+        return []
+
+
+def _import_playlist_stream(
+    *,
+    user: dict,
+    playlist_name: str,
+    source_url: str,
+    source_label: str,
+    input_tracks: list[dict],
+):
+    async def generate():
+        import json as _json
+
+        if not input_tracks:
+            raise HTTPException(400, "Плейлист пуст или все треки недоступны")
+
+        playlist_id = db.create_playlist(user["id"], playlist_name)
+        total = len(input_tracks)
+        sem = asyncio.Semaphore(5)
+
+        async def find_one(src_track: dict):
+            async with sem:
+                query = src_track["search_query"]
+                sc_task = asyncio.create_task(_safe_import_search(sc.search, query, 10))
+                yt_task = asyncio.create_task(_safe_import_search(ytmusic.search, query, 10))
+                dz_task = asyncio.create_task(_safe_import_search(deezer.search, query, 10))
+                sc_res, yt_res, dz_res = await asyncio.gather(sc_task, yt_task, dz_task)
+                all_results = (sc_res or []) + (yt_res or []) + (dz_res or [])
+                if not all_results:
+                    return None
+                return _pick_best_import_result(all_results, src_track)
+
+        imported = 0
+        t0 = time.monotonic()
+
+        yield "data: " + _json.dumps({
+            "type": "start",
+            "total": total,
+            "name": playlist_name,
+            "source": source_label,
+        }) + "\n\n"
+
+        batch_size = 10
+        for batch_start in range(0, total, batch_size):
+            batch_end = min(batch_start + batch_size, total)
+            batch = input_tracks[batch_start:batch_end]
+            found_batch = await asyncio.gather(*[find_one(t) for t in batch])
+
+            for i, track in enumerate(found_batch):
+                current = batch_start + i + 1
+                track_name = batch[i].get("title", "?")
+
+                if track:
+                    sc.remember_track(track)
+                    db.upsert_track(track)
+                    db.add_track_to_playlist(
+                        playlist_id,
+                        track["id"],
+                        position=imported,
+                    )
+                    imported += 1
+
+                yield "data: " + _json.dumps({
+                    "type": "progress",
+                    "current": current,
+                    "total": total,
+                    "imported": imported,
+                    "track": track_name,
+                    "found": track is not None,
+                }) + "\n\n"
+
+        ms = int((time.monotonic() - t0) * 1000)
+        db.log_event(
+            user,
+            "import_yandex_client" if source_label == "yandex_client" else "import_yandex",
+            query=source_url,
+            ok=True,
+            ms=ms,
+        )
+        log.info(
+            "Import [%s]: '%s' → %d/%d tracks in %dms",
+            source_label,
+            playlist_name,
+            imported,
+            total,
+            ms,
+        )
+
+        yield "data: " + _json.dumps({
+            "type": "done",
+            "playlist_id": playlist_id,
+            "name": playlist_name,
+            "total": total,
+            "imported": imported,
+            "source": source_label,
+        }) + "\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
 # ───────── Import Yandex Music ─────────
 
 _import_tasks: dict[str, dict] = {}
@@ -447,8 +649,6 @@ async def api_import_status(task_id: str, user: dict = Depends(get_user)):
 
 @app.post("/api/import/yandex")
 async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
-    import json as _json
-
     body = await request.json()
     url = (body.get("url") or "").strip()
 
@@ -470,7 +670,7 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
         raise HTTPException(
             403,
             "Яндекс Музыка временно заблокировала импорт с сервера captcha-защитой. "
-            "Попробуй позже или используй ссылку с устройства, где плейлист открывается в браузере."
+            "Попробуй клиентский импорт в Mini App."
         )
     except ValueError as exc:
         log.warning("Yandex import validation: %s", exc)
@@ -482,189 +682,66 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
         log.error("Yandex import failed for url=%s\n%s", url, exc, exc_info=True)
         raise HTTPException(500, "Внутренняя ошибка импорта")
 
-    if not ym["tracks"]:
-        raise HTTPException(400, "Плейлист пуст или все треки недоступны")
+    return _import_playlist_stream(
+        user=user,
+        playlist_name=ym["name"],
+        source_url=url,
+        source_label="yandex_server",
+        input_tracks=ym["tracks"],
+    )
 
-    playlist_id = db.create_playlist(user["id"], ym["name"])
-    total = len(ym["tracks"])
-    sem = asyncio.Semaphore(5)
+@app.post("/api/import/yandex/client")
+async def api_import_yandex_client(request: Request, user: dict = Depends(get_user)):
+    body = await request.json()
 
-    def _normalize(s: str) -> set:
-        s = s.lower()
-        s = s.replace("feat.", " ").replace("feat ", " ")
-        s = s.replace("ft.", " ").replace("ft ", " ")
-        s = s.replace("prod.", " ").replace("prod ", " ")
-        for ch in "()[]{}«»\"'.,!?;:—–-/\\|@#$%^&*+=~`":
-            s = s.replace(ch, " ")
-        return {w for w in s.split() if len(w) > 1}
+    url = (body.get("url") or "").strip()
+    name = (body.get("name") or "Яндекс Музыка").strip()
+    tracks = body.get("tracks") or []
 
-    def _match_score(
-        query_artist: str,
-        query_title: str,
-        found_artist: str,
-        found_title: str,
-    ) -> float:
-        q_words = _normalize(query_artist) | _normalize(query_title)
-        f_words = _normalize(found_artist) | _normalize(found_title)
-        if not q_words or not f_words:
-            return 0.0
-        forward = len(q_words & f_words) / len(q_words)
-        backward = len(q_words & f_words) / len(f_words)
-        return forward * 0.6 + backward * 0.4
+    if not url:
+        raise HTTPException(400, "url required")
 
-    def _pick_best(results: list, ym_track: dict, min_text_score: float = 0.3):
-        if not results:
-            return None
+    if "yandex" not in url.lower():
+        raise HTTPException(400, "Ожидается ссылка на Яндекс Музыку")
 
-        expected = ym_track.get("duration_sec", 0)
-        q_artist = ym_track.get("artist", "")
-        q_title = ym_track.get("title", "")
-        query_text = f"{q_artist} {q_title}".lower()
+    if not isinstance(tracks, list) or not tracks:
+        raise HTTPException(400, "tracks required")
 
-        scored = []
-        for t in results:
-            text_score = _match_score(
-                q_artist,
-                q_title,
-                t.get("artist", ""),
-                t.get("title", ""),
-            )
-            if expected > 0 and t.get("duration_sec", 0) > 0:
-                diff = abs(t["duration_sec"] - expected)
-                dur_score = max(0, 1.0 - diff / max(expected, 60))
-            else:
-                dur_score = 0.5
+    normalized_tracks = []
+    for i, t in enumerate(tracks):
+        if not isinstance(t, dict):
+            continue
 
-            candidate_text = f"{t.get('title', '')} {t.get('artist', '')}".lower()
-            penalty = 0.0
-            for kw, pw in _IMPORT_PENALTY_KW.items():
-                if kw in candidate_text and kw not in query_text:
-                    penalty += pw
-            penalty = min(penalty, _IMPORT_PENALTY_MAX)
+        title = (t.get("title") or "").strip()
+        artist = (t.get("artist") or "").strip()
+        duration_sec = int(t.get("duration_sec") or 0)
 
-            src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
-            total_score = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
-            scored.append((t, total_score, text_score, dur_score, penalty))
+        if not title or not artist:
+            continue
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        best, total_s, text_sc, dur_sc, pen = scored[0]
+        normalized_tracks.append({
+            "title": title,
+            "artist": artist,
+            "duration_sec": duration_sec,
+            "search_query": f"{artist} - {title}",
+        })
 
-        log.info(
-            "  Match: '%.40s' by '%.30s' [%s] "
-            "→ text=%.2f dur=%.2f pen=%.2f total=%.2f",
-            best.get("title", "?"),
-            best.get("artist", "?"),
-            best.get("source", "?"),
-            text_sc,
-            dur_sc,
-            pen,
-            total_s,
-        )
+    if not normalized_tracks:
+        raise HTTPException(400, "Нет валидных треков для импорта")
 
-        if text_sc < min_text_score:
-            log.warning(
-                "  REJECTED (text_score=%.2f < %.2f): '%s - %s' ≠ '%s - %s'",
-                text_sc,
-                min_text_score,
-                best.get("artist", "?"),
-                best.get("title", "?"),
-                ym_track.get("artist", "?"),
-                ym_track.get("title", "?"),
-            )
-            return None
+    log.info(
+        "Yandex client import: '%s' (%d tracks) by user=%s",
+        name,
+        len(normalized_tracks),
+        user["id"],
+    )
 
-        return best
-
-    async def _safe_search(func, query, limit):
-        try:
-            return await retry_async(func, query, limit=limit, retries=2)
-        except Exception as e:
-            log.warning("Import search failed (%s): %s", func.__module__, e)
-            return []
-
-    async def find_one(ym_track: dict):
-        async with sem:
-            query = ym_track["search_query"]
-            sc_task = asyncio.create_task(_safe_search(sc.search, query, 10))
-            yt_task = asyncio.create_task(_safe_search(ytmusic.search, query, 10))
-            dz_task = asyncio.create_task(_safe_search(deezer.search, query, 10))
-            sc_res, yt_res, dz_res = await asyncio.gather(sc_task, yt_task, dz_task)
-            all_results = (sc_res or []) + (yt_res or []) + (dz_res or [])
-            if not all_results:
-                return None
-            return _pick_best(all_results, ym_track)
-
-    async def generate():
-        imported = 0
-        t0 = time.monotonic()
-
-        yield "data: " + _json.dumps(
-            {
-                "type": "start",
-                "total": total,
-                "name": ym["name"],
-            }
-        ) + "\n\n"
-
-        batch_size = 10
-        for batch_start in range(0, total, batch_size):
-            batch_end = min(batch_start + batch_size, total)
-            batch = ym["tracks"][batch_start:batch_end]
-            found_batch = await asyncio.gather(*[find_one(t) for t in batch])
-
-            for i, track in enumerate(found_batch):
-                current = batch_start + i + 1
-                track_name = batch[i].get("title", "?")
-
-                if track:
-                    sc.remember_track(track)
-                    db.upsert_track(track)
-                    db.add_track_to_playlist(
-                        playlist_id,
-                        track["id"],
-                        position=imported,
-                    )
-                    imported += 1
-
-                yield "data: " + _json.dumps(
-                    {
-                        "type": "progress",
-                        "current": current,
-                        "total": total,
-                        "imported": imported,
-                        "track": track_name,
-                        "found": track is not None,
-                    }
-                ) + "\n\n"
-
-        ms = int((time.monotonic() - t0) * 1000)
-        db.log_event(user, "import_yandex", query=url, ok=True, ms=ms)
-        log.info(
-            "Yandex import: '%s' → %d/%d tracks in %dms",
-            ym["name"],
-            imported,
-            total,
-            ms,
-        )
-
-        yield "data: " + _json.dumps(
-            {
-                "type": "done",
-                "playlist_id": playlist_id,
-                "name": ym["name"],
-                "total": total,
-                "imported": imported,
-            }
-        ) + "\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
+    return _import_playlist_stream(
+        user=user,
+        playlist_name=name,
+        source_url=url,
+        source_label="yandex_client",
+        input_tracks=normalized_tracks,
     )
 
 
