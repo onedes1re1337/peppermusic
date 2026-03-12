@@ -60,18 +60,52 @@ def _extract_tracks(result: dict) -> List[Dict[str, Any]]:
         })
     return tracks
 
-
 async def _fetch_by_owner_kind(
     owner: str, kind: str, token: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Получить плейлист по owner/kind через API."""
+    """
+    Получить плейлист по owner/kind через API.
+    Важно: owner в URL может быть логином (например Kmo117), а API часто ждет uid.
+    Поэтому если owner не числовой, сначала пытаемся резолвить его через users/<login>.
+    """
     headers = {"User-Agent": _UA, "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"OAuth {token}"
 
+    owner_for_api = owner
+
     async with aiohttp.ClientSession() as s:
+        # 1. Если owner — логин, пробуем превратить его в uid
+        if not owner.isdigit():
+            async with s.get(
+                f"{_API}/users/{owner}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    result = data.get("result", data)
+                    uid = (
+                        result.get("uid")
+                        or result.get("id")
+                        or result.get("user", {}).get("uid")
+                    )
+                    if uid:
+                        owner_for_api = str(uid)
+                        log.info("Resolved Yandex owner login '%s' -> uid=%s", owner, owner_for_api)
+                    else:
+                        text = await r.text()
+                        log.warning("Could not extract uid for owner='%s': %s", owner, text[:300])
+                else:
+                    text = await r.text()
+                    log.warning(
+                        "Failed to resolve Yandex owner '%s': status=%s body=%s",
+                        owner, r.status, text[:300]
+                    )
+
+        # 2. Пробуем запросить плейлист уже по owner_for_api
         async with s.get(
-            f"{_API}/users/{owner}/playlists/{kind}",
+            f"{_API}/users/{owner_for_api}/playlists/{kind}",
             headers=headers,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
@@ -81,15 +115,19 @@ async def _fetch_by_owner_kind(
                 raise ValueError("Требуется авторизация. Установите YANDEX_MUSIC_TOKEN.")
             if r.status != 200:
                 text = await r.text()
-                raise RuntimeError(f"Yandex API {r.status}: {text[:300]}")
+                raise RuntimeError(
+                    f"Yandex API {r.status}: owner={owner} owner_for_api={owner_for_api} kind={kind} body={text[:300]}"
+                )
             data = await r.json()
 
     result = data.get("result", data)
     name = result.get("title") or "Яндекс Музыка"
     tracks = _extract_tracks(result)
 
-    log.info("Fetched %d tracks from '%s' (owner=%s kind=%s)",
-             len(tracks), name, owner, kind)
+    log.info(
+        "Fetched %d tracks from '%s' (owner=%s api_owner=%s kind=%s)",
+        len(tracks), name, owner, owner_for_api, kind
+    )
     return {"name": name, "track_count": len(tracks), "tracks": tracks}
 
 
@@ -206,12 +244,17 @@ async def fetch_playlist(
     """
     log.info("Yandex Music import: %s (token=%s)", url, "yes" if token else "no")
 
-    # 1. Классический формат: /users/OWNER/playlists/KIND
+    # 1. Сначала пробуем классический URL напрямую
     owner, kind = _parse_classic_url(url)
     if owner and kind:
-        return await _fetch_by_owner_kind(owner, kind, token)
+        try:
+            return await _fetch_by_owner_kind(owner, kind, token)
+        except RuntimeError as exc:
+            # Иногда owner в ссылке — логин, а API капризничает.
+            # Тогда пробуем более устойчивый путь через HTML страницы.
+            log.warning("Direct classic API fetch failed, fallback to HTML resolve: %s", exc)
 
-    # 2. UUID формат: /playlists/UUID → парсим HTML
+    # 2. Универсальный fallback: открываем HTML и пытаемся извлечь owner/kind или встроенные данные
     owner, kind, embedded_data = await _resolve_shared_from_html(url, token)
 
     # Если нашли данные прямо в HTML

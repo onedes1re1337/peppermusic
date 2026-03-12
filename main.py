@@ -468,9 +468,12 @@ async def api_import_yandex(request: Request, user: dict = Depends(get_user)):
     except ValueError as exc:
         log.warning("Yandex import validation: %s", exc)
         raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        log.error("Yandex import runtime failure for url=%s\n%s", url, exc, exc_info=True)
+        raise HTTPException(502, f"Ошибка ответа Яндекс Музыки: {exc}")
     except Exception as exc:
         log.error("Yandex import failed for url=%s\n%s", url, exc, exc_info=True)
-        raise HTTPException(500, f"Ошибка импорта: {exc}")
+        raise HTTPException(500, "Внутренняя ошибка импорта")
 
     if not ym["tracks"]:
         raise HTTPException(400, "Плейлист пуст или все треки недоступны")
