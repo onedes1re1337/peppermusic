@@ -532,6 +532,7 @@ def _import_tracks_stream(
     source_url: str,
     playlist_name: str,
     source_tracks: list[dict],
+    min_text_score: float = 0.3,
 ):
     async def generate():
         import json as _json
@@ -553,7 +554,9 @@ def _import_tracks_stream(
                 all_results = (sc_res or []) + (yt_res or []) + (dz_res or [])
                 if not all_results:
                     return None
-                return _pick_best_import_result(all_results, src_track)
+                return _pick_best_import_result(
+                    all_results, src_track, min_text_score=min_text_score,
+                )
 
         imported = 0
         t0 = time.monotonic()
@@ -635,6 +638,30 @@ async def _cleanup_import_tasks():
     for k in to_remove:
         del _import_tasks[k]
 
+def _line_quality_score(s: str) -> float:
+    """0..1 — насколько строка похожа на настоящий текст (а не OCR-мусор)."""
+    if not s or len(s) < 2:
+        return 0.0
+
+    total = len(s)
+    letters = sum(1 for c in s if c.isalpha())
+    letter_ratio = letters / total if total else 0
+
+    normal = sum(1 for c in s if c.isalnum() or c in " ,.-!?'\"&")
+    normal_ratio = normal / total if total else 0
+
+    words = re.findall(r'[a-zA-Zа-яА-ЯёЁ]{2,}', s)
+    word_score = min(1.0, len(words) * 0.2)
+
+    edge_pen = 0
+    if not s[0].isalnum():
+        edge_pen += 0.15
+    if not s[-1].isalnum() and s[-1] not in "!?.":
+        edge_pen += 0.10
+
+    score = letter_ratio * 0.35 + normal_ratio * 0.30 + word_score * 0.35 - edge_pen
+    return max(0.0, min(1.0, score))
+
 def _ocr_extract_lines(text: str) -> list[str]:
     lines = []
 
@@ -643,27 +670,25 @@ def _ocr_extract_lines(text: str) -> list[str]:
         if not s:
             continue
 
-        # ── Чистим OCR-мусор ──
-        # Убираем типичные артефакты: ©, ®, ™, •, повторяющиеся спецсимволы
-        s = re.sub(r'[©®™°•·|]+', ' ', s)
-        # Убираем мусорные префиксы: _. ... , # , цифры с точками
-        s = re.sub(r'^[\s_\.\-\#\*…]+', '', s)
-        # Убираем нумерацию
+        # ── OCR-артефакты ──
+        s = re.sub(r'[©®™°•·|_]+', ' ', s)
+        s = re.sub(r'^[\s_\.\-\#\*…<>]+', '', s)
+        s = re.sub(r'[\s_\.\-\*…<>]+$', '', s)
         s = re.sub(r'^\s*\d+[\.\)]\s*', '', s)
-        # Убираем длительность в конце (3:45, 04:12)
         s = re.sub(r'\s+\d{1,2}:\d{2}\s*$', '', s)
-        # Убираем одиночные буквы/символы на краях
-        s = re.sub(r'^[a-zA-Zа-яА-Я]{1}\s+', '', s)
-        s = re.sub(r'\s+[a-zA-Zа-яА-Я]{1}$', '', s)
 
-        # Нормализуем тире
+        # Убираем одиночные символы на краях
+        s = re.sub(r'^[^\w]{1,3}\s+', '', s)
+        s = re.sub(r'\s+[^\w]{1,3}$', '', s)
+
+        # Нормализуем тире и пробелы
         s = s.replace("—", "-").replace("–", "-").replace("−", "-")
         s = re.sub(r'\s+', ' ', s).strip()
 
         if len(s) < 3:
             continue
 
-        # UI-мусор
+        # ── UI-мусор ──
         low = s.lower()
         ui_trash = {
             "shuffle", "repeat", "search", "explicit", "playlist",
@@ -671,13 +696,20 @@ def _ocr_extract_lines(text: str) -> list[str]:
             "далее", "назад", "пауза", "стоп", "play", "pause",
             "like", "dislike", "download", "share", "queue",
             "моя музыка", "my music", "мне нравится", "liked",
-            "все треки", "all tracks",
+            "все треки", "all tracks", "реклама", "advertisement",
+            "подписка", "premium", "subscription",
         }
         if low in ui_trash:
             continue
 
-        # Чисто числовые строки — мусор
+        # Чисто числовые/символьные — мусор
         if re.match(r'^[\d\s:\.]+$', s):
+            continue
+
+        # ── Качество строки ──
+        quality = _line_quality_score(s)
+        if quality < 0.35:
+            log.debug("OCR line dropped (q=%.2f): '%s'", quality, s)
             continue
 
         lines.append(s)
@@ -694,7 +726,6 @@ def _ocr_extract_lines(text: str) -> list[str]:
 
     return out
 
-
 def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
     tracks = []
 
@@ -710,15 +741,16 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
         if " - " not in s:
             continue
 
-        artist, title = s.split(" - ", 1)
-        artist = artist.strip(" -")
-        title = title.strip(" -")
+        parts = s.split(" - ", 1)
+        artist = parts[0].strip(" -")
+        title = parts[1].strip(" -")
 
         if len(artist) < 2 or len(title) < 2:
             continue
 
-        low = f"{artist} {title}".lower()
-        if any(bad in low for bad in ["поделиться", "добавить", "playlist", "shuffle", "repeat"]):
+        aq = _line_quality_score(artist)
+        tq = _line_quality_score(title)
+        if aq < 0.3 or tq < 0.3:
             continue
 
         tracks.append({
@@ -729,65 +761,115 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
         })
 
     if tracks:
-        log.info("OCR parse: strategy 1 (dash-separated) → %d tracks", len(tracks))
+        log.info("OCR strategy 1 (dash) → %d tracks", len(tracks))
         return tracks
 
     # ═══════════════════════════════════════
-    #  Стратегия 2: парные строки (title + artist)
-    #  Музыкальные приложения показывают:
-    #    Строка 1: Название (крупнее/жирнее)
-    #    Строка 2: Исполнитель (мельче/бледнее)
+    #  Подготовка: фильтруем только качественные строки
     # ═══════════════════════════════════════
-    text_lines = []
+    quality_lines = []
     for line in lines:
         s = line.strip()
-        # Пропускаем чистые таймстампы
         if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', s):
             continue
-        # Пропускаем чистые числа (номера треков, счётчики)
         if re.match(r'^\d+$', s):
             continue
         if len(s) < 2:
             continue
-        text_lines.append(s)
+        q = _line_quality_score(s)
+        if q >= 0.45:
+            quality_lines.append((s, q))
 
-    if len(text_lines) >= 2:
-        for i in range(0, len(text_lines) - 1, 2):
-            title = text_lines[i].strip()
-            artist = text_lines[i + 1].strip()
+    log.info(
+        "OCR quality lines: %d/%d → %s",
+        len(quality_lines), len(lines),
+        [(s, round(q, 2)) for s, q in quality_lines[:12]],
+    )
+
+    # ═══════════════════════════════════════
+    #  Стратегия 2: парные строки (title + artist)
+    #  Только если чётное количество качественных строк ≥ 4
+    #  и обе строки в паре имеют высокое качество
+    # ═══════════════════════════════════════
+    if len(quality_lines) >= 4 and len(quality_lines) % 2 == 0:
+        paired_tracks = []
+        valid_pairs = 0
+        total_pairs = len(quality_lines) // 2
+
+        for i in range(0, len(quality_lines) - 1, 2):
+            title, tq = quality_lines[i]
+            artist, aq = quality_lines[i + 1]
 
             if len(title) < 2 or len(artist) < 2:
                 continue
 
+            # Обе строки должны быть достаточно качественными
+            if tq >= 0.45 and aq >= 0.45:
+                valid_pairs += 1
+                paired_tracks.append({
+                    "artist": artist,
+                    "title": title,
+                    "duration_sec": 0,
+                    "search_query": f"{artist} - {title}",
+                })
+
+        # Принимаем стратегию 2, только если ≥60% пар валидные
+        if total_pairs > 0 and valid_pairs / total_pairs >= 0.6 and paired_tracks:
+            log.info(
+                "OCR strategy 2 (paired) → %d tracks (%d/%d valid pairs)",
+                len(paired_tracks), valid_pairs, total_pairs,
+            )
+            return paired_tracks
+
+    # ═══════════════════════════════════════
+    #  Стратегия 3: smart merge + raw search
+    #  Пробуем склеить соседние строки в запрос,
+    #  а одиночные использовать как есть
+    # ═══════════════════════════════════════
+    clean_lines = [s for s, q in quality_lines]
+
+    if not clean_lines:
+        clean_lines = [l for l in lines if len(l.strip()) >= 4]
+
+    if len(clean_lines) >= 2:
+        # Пробуем склеить пары (даже нечётные) — ищем как "title artist"
+        i = 0
+        while i < len(clean_lines):
+            s1 = clean_lines[i]
+            if i + 1 < len(clean_lines):
+                s2 = clean_lines[i + 1]
+                # Склеиваем в один поисковый запрос
+                merged = f"{s1} {s2}"
+                tracks.append({
+                    "artist": s2,
+                    "title": s1,
+                    "duration_sec": 0,
+                    "search_query": merged,
+                })
+                i += 2
+            else:
+                # Последняя непарная строка — ищем как есть
+                tracks.append({
+                    "artist": "",
+                    "title": s1,
+                    "duration_sec": 0,
+                    "search_query": s1,
+                })
+                i += 1
+    else:
+        # Совсем мало строк — каждую как отдельный запрос
+        for s in clean_lines:
+            if len(s) < 4:
+                continue
             tracks.append({
-                "artist": artist,
-                "title": title,
+                "artist": "",
+                "title": s,
                 "duration_sec": 0,
-                "search_query": f"{artist} - {title}",
+                "search_query": s,
             })
 
     if tracks:
-        log.info("OCR parse: strategy 2 (paired lines) → %d tracks", len(tracks))
-        return tracks
-
-    # ═══════════════════════════════════════
-    #  Стратегия 3: каждая строка = поисковый запрос
-    #  Последний шанс — ищем как есть
-    # ═══════════════════════════════════════
-    source_lines = text_lines if text_lines else lines
-    for line in source_lines:
-        s = line.strip()
-        if len(s) < 4:
-            continue
-        tracks.append({
-            "artist": "",
-            "title": s,
-            "duration_sec": 0,
-            "search_query": s,
-        })
-
-    if tracks:
-        log.info("OCR parse: strategy 3 (raw search) → %d tracks", len(tracks))
+        log.info("OCR strategy 3 (smart merge) → %d tracks", len(tracks))
 
     return tracks
 
@@ -797,22 +879,19 @@ def _ocr_image_to_text(image_bytes: bytes) -> str:
     gray = img.convert("L")
     w, h = gray.size
 
-    # ── Определяем тёмную тему по средней яркости ──
     pixels = list(gray.getdata())
     mean_brightness = sum(pixels) / len(pixels) if pixels else 128
 
     if mean_brightness < 128:
         gray = ImageOps.invert(gray)
-        log.info("OCR: dark theme detected (mean=%.0f), inverting", mean_brightness)
+        log.info("OCR: dark theme (mean=%.0f), inverting", mean_brightness)
 
     gray = ImageOps.autocontrast(gray, cutoff=1)
     gray = gray.filter(ImageFilter.SHARPEN)
 
-    # Увеличиваем для лучшего распознавания
     scale = 3
     gray = gray.resize((w * scale, h * scale), Image.LANCZOS)
 
-    # ── Пробуем несколько порогов и PSM-режимов, берём лучший ──
     best_text = ""
     best_score = 0
 
@@ -821,28 +900,44 @@ def _ocr_image_to_text(image_bytes: bytes) -> str:
 
         for psm in [4, 6]:
             config = f"--oem 3 --psm {psm}"
-            try:
-                text = pytesseract.image_to_string(binary, lang="rus+eng", config=config)
-                # Считаем «полезные» строки — не чистый мусор
-                useful = [
-                    l.strip() for l in text.splitlines()
-                    if l.strip()
-                    and len(l.strip()) >= 3
-                    and not re.match(r'^[\W\d\s]+$', l.strip())
-                ]
-                score = len(useful)
-                if score > best_score:
-                    best_score = score
-                    best_text = text
-            except Exception as e:
-                log.warning("OCR attempt (psm=%d, thresh=%d): %s", psm, threshold, e)
+
+            # Пробуем rus+eng и rus отдельно
+            for lang in ["rus+eng", "rus"]:
+                try:
+                    text = pytesseract.image_to_string(
+                        binary, lang=lang, config=config,
+                    )
+                    useful = [
+                        l.strip() for l in text.splitlines()
+                        if l.strip()
+                        and len(l.strip()) >= 3
+                        and not re.match(r'^[\W\d\s]+$', l.strip())
+                    ]
+                    # Считаем score: кол-во полезных строк + средний % букв
+                    letter_pcts = []
+                    for u in useful:
+                        letters = sum(1 for c in u if c.isalpha())
+                        letter_pcts.append(letters / len(u) if u else 0)
+                    avg_letter = (
+                        sum(letter_pcts) / len(letter_pcts)
+                        if letter_pcts else 0
+                    )
+                    score = len(useful) * (0.5 + avg_letter * 0.5)
+
+                    if score > best_score:
+                        best_score = score
+                        best_text = text
+                except Exception as e:
+                    log.debug(
+                        "OCR attempt (lang=%s psm=%d thresh=%d): %s",
+                        lang, psm, threshold, e,
+                    )
 
     log.info(
-        "OCR best result: %d useful lines (mean_brightness=%.0f)",
+        "OCR best: score=%.1f lines (mean_brightness=%.0f)",
         best_score, mean_brightness,
     )
     return best_text
-
 
 @app.get("/api/import/yandex/status/{task_id}")
 async def api_import_status(task_id: str, user: dict = Depends(get_user)):
@@ -943,6 +1038,7 @@ async def api_import_yandex_screenshot(
         source_url="screenshot",
         playlist_name=name.strip() or "Импорт по скриншоту",
         source_tracks=tracks,
+        min_text_score=0.20,  # ← ниже для скриншотов (OCR шумный)
     )
 
 _art_cache: "OrderedDict[str, tuple[bytes, str, float]]" = OrderedDict()
