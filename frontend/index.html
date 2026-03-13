@@ -802,9 +802,9 @@
 
       <div id="import-ym-panel-shot" class="ym-import-panel hidden">
         <label class="ym-upload-box" for="import-ym-file">
-        <div class="ym-upload-title">Загрузи скриншот со списком треков</div>
-        <div class="ym-upload-subtitle">Подойдет любой список треков, где читаются названия и исполнители</div>
-          <div class="ym-upload-subtitle">Лучше, если на скриншоте видны строки вида Artist — Title</div>
+          <input id="import-ym-file" type="file" accept="image/*" hidden />
+          <div class="ym-upload-title">Загрузи скриншот со списком треков</div>
+          <div class="ym-upload-subtitle">Подойдет любой список треков, где читаются названия и исполнители</div>
         </label>
         <div id="import-ym-file-name" class="modal-status"></div>
         <button id="import-ym-shot-submit" class="modal-submit" disabled>Найти треки по скриншоту</button>
@@ -1157,7 +1157,7 @@
     // Все обработчики используют boundTracks, а не $list._tracks
     listEl.querySelectorAll(".track").forEach((el) => {
       el.addEventListener("click", (e) => {
-        if (e.target.closest(".t-fav") || e.target.closest(".t-action")) return;
+        if (e.target.closest(".t-fav") || e.target.closest(".t-add-pl")) return;
         onTrackClick(el, boundTracks);
       });
     });
@@ -1228,13 +1228,6 @@
       el.addEventListener("click", (e) => {
         if (e.target.closest(".t-fav") || e.target.closest(".t-action") || e.target.closest(".t-add-pl") || e.target.closest(".t-remove-pl")) return;
         onTrackClick(el, boundTracks);
-      });
-    });
-
-    $list.querySelectorAll(".t-action").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        onTrackClick(btn.closest(".track"), boundTracks);
       });
     });
 
@@ -1345,17 +1338,14 @@
     document.querySelectorAll(".track").forEach((el) => {
       const active = cur && String(cur.id) === String(el.dataset.id);
       el.classList.toggle("playing", active);
-      const action = el.querySelector(".t-action");
       const overlay = el.querySelector(".t-play-btn");
-      if (!action || !overlay) return;
+      if (!overlay) return;
+
       if (active && isPlaying) {
-        action.innerHTML = eqHTML(false);
         overlay.innerHTML = eqHTML(false);
       } else if (active && !isPlaying) {
-        action.innerHTML = eqHTML(true);
         overlay.innerHTML = eqHTML(true);
       } else {
-        action.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>';
         overlay.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>';
       }
     });

@@ -184,6 +184,41 @@
     return `<span class="t-source-tag tag-soundcloud">SoundCloud</span>`;
   }
 
+  function hideKeyboard() {
+    const el = document.activeElement;
+    if (!el) return;
+    const tag = (el.tagName || "").toLowerCase();
+    const isEditable =
+      tag === "input" ||
+      tag === "textarea" ||
+      el.isContentEditable;
+
+    if (isEditable) {
+      el.blur();
+    }
+  }
+
+  $q.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      hideKeyboard();
+    }
+  });
+
+  $newPlName.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      hideKeyboard();
+    }
+  });
+
+  $importYMUrl?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      hideKeyboard();
+      if ($importYMUrl.value.trim()) {
+        startUrlImport();
+      }
+    }
+  });
+
   // ── Favorites ──
   function isFav(trackId) {
     return favoriteTracks.some((t) => String(t.id) === String(trackId));
@@ -274,6 +309,10 @@
       <div class="status" style="padding:12px;">
         <input type="text" id="fav-search-input" placeholder="Название трека или артист">
       </div>`;
+
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") hideKeyboard();
+    });
 
     $list.innerHTML = searchInputHtml + `
       <div class="track-list" id="fav-tracks-list">
@@ -1243,6 +1282,41 @@
   audio.addEventListener("play", () => { setPlaying(true); syncTrackList(); });
   audio.addEventListener("pause", () => { setPlaying(false); syncTrackList(); });
   audio.addEventListener("ended", () => playNext());
+
+  document.addEventListener("touchstart", (e) => {
+    const target = e.target;
+    if (
+      target.closest("input") ||
+      target.closest("textarea") ||
+      target.closest(".search-wrap") ||
+      target.closest(".modal-input")
+    ) {
+      return;
+    }
+    hideKeyboard();
+  }, { passive: true });
+
+  document.addEventListener("click", (e) => {
+    const target = e.target;
+    if (
+      target.closest("input") ||
+      target.closest("textarea") ||
+      target.closest(".search-wrap") ||
+      target.closest(".modal-input")
+    ) {
+      return;
+    }
+    hideKeyboard();
+  });
+
+  let keyboardScrollTimer = null;
+
+  window.addEventListener("scroll", () => {
+    clearTimeout(keyboardScrollTimer);
+    keyboardScrollTimer = setTimeout(() => {
+      hideKeyboard();
+    }, 30);
+  }, { passive: true });
 
   // ── Init ──
   loadFavorites();
