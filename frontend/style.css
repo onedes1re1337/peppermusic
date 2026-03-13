@@ -425,6 +425,20 @@ body::after {
 }
 .player-main-btn svg { width: 20px; height: 20px; }
 
+/* ── Кнопка удаления из плейлиста в плеере ── */
+.player-remove-btn {
+  color: var(--muted);
+  transition: all .15s ease;
+}
+.player-remove-btn:hover {
+  color: var(--danger);
+  border-color: rgba(251,113,133,.35);
+  background: rgba(251,113,133,.1);
+}
+.player-remove-btn.hidden {
+  display: none;
+}
+
 .icon-play.hidden, .icon-pause.hidden { display: none; }
 
 .fav-btn.active {

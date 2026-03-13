@@ -28,6 +28,7 @@
   const $tabSearch = $("tab-search");
   const $tabPlaylists = $("tab-playlists");
   const $tabFav = $("tab-favorites");
+  const $btnRemovePl = $("btn-remove-pl");
 
   const $pArt = $("p-art");
   const $pTitle = $("p-title");

@@ -546,6 +546,20 @@
     .player-main-btn svg{width:20px;height:20px;}
     .icon-play.hidden,.icon-pause.hidden{display:none;}
 
+    /* ── Кнопка удаления из плейлиста в плеере ── */
+    .player-remove-btn {
+      color: var(--muted);
+      transition: all .15s ease;
+    }
+    .player-remove-btn:hover {
+      color: var(--danger);
+      border-color: rgba(251,113,133,.35);
+      background: rgba(251,113,133,.1);
+    }
+    .player-remove-btn.hidden {
+      display: none;
+    }
+
     .fav-btn.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
     #btn-dl.ok{color:var(--accent-3);border-color:rgba(34,197,94,.36);}
     #btn-dl.err{color:var(--danger);border-color:rgba(251,113,133,.36);}
@@ -732,7 +746,7 @@
       <div class="logo-mark">♪</div>
       <div>
         <div class="logo">PepperMusic</div>
-        <div class="logo-sub">soundcloud · deezer · youtube music</div>
+        <div class="logo-sub">soundcloud & youtube music</div>
       </div>
     </div>
   </header>
@@ -831,6 +845,14 @@
 
         <button id="btn-fav" class="player-icon-btn player-ghost fav-btn" title="В избранное" aria-label="В избранное">
           <svg viewBox="0 0 24 24"><path d="M12 21s-6.716-4.35-9.193-8.091C.812 9.824 2.002 5.5 5.9 4.427 8.161 3.805 10.112 4.75 12 6.7c1.888-1.95 3.839-2.895 6.1-2.273 3.898 1.073 5.088 5.397 3.093 8.482C18.716 16.65 12 21 12 21z"/></svg>
+        </button>
+        <button id="btn-remove-pl" class="player-icon-btn player-ghost player-remove-btn hidden" title="Убрать из плейлиста" aria-label="Убрать из плейлиста">
+          <svg viewBox="0 0 24 24">
+            <g fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </g>
+          </svg>
         </button>
       </div>
     </div>
@@ -963,7 +985,10 @@
   const $btnRepeat = $("btn-repeat");
   const $btnDL = $("btn-dl");
   const $btnFav = $("btn-fav");
+  const $btnRemovePl = $("btn-remove-pl");
   const $progressHit = $("progress-hit");
+  let currentPlaySource = "search";
+  let currentPlaylistId = null;
 
   const $modalCreatePl = $("modal-create-pl");
   const $newPlName = $("new-pl-name");
@@ -1255,9 +1280,16 @@
   }
 
   // ── Queue / Shuffle ──
-  function setQueue(tracks, idx) {
+  function setQueue(tracks, idx, source, playlistId) {
     currentQueue = [...tracks];
     currentIndex = idx;
+    currentPlaySource = source || $list._source || "search";
+    currentPlaylistId = playlistId || null;
+  }
+
+  function syncRemoveButton() {
+    const show = currentPlaySource === "playlist" && !!currentPlaylistId;
+    $btnRemovePl.classList.toggle("hidden", !show);
   }
 
   function shuffleArray(arr) {
@@ -1454,6 +1486,10 @@
 
   function onTrackClick(el, tracksOverride) {
     const tracks = tracksOverride || $list._tracks;
+    const source = $list._source || "search";
+    const plId = (source === "playlist" && currentPlaylistDetail)
+      ? currentPlaylistDetail.id
+      : null;
     const idx = Number(el.dataset.idx);
     const track = tracks[idx];
     if (!track) return;
@@ -1463,7 +1499,7 @@
       return;
     }
 
-    setQueue(tracks, idx);
+    setQueue(tracks, idx, source, plId);
     playTrack(track);
   }
 
@@ -1484,6 +1520,7 @@
     setPlaying(true);
     syncTrackList();
     syncFavoriteButtons();
+    syncRemoveButton();
   }
 
   function setPlaying(v) {
@@ -1802,14 +1839,14 @@
 
     $("pl-play-all")?.addEventListener("click", () => {
       if (!tracks.length) return;
-      setQueue(tracks, 0);
+      setQueue(tracks, 0, "playlist", pl.id);
       playTrack(tracks[0]);
     });
 
     $("pl-shuffle-btn")?.addEventListener("click", () => {
       if (!tracks.length) return;
       const shuffled = shuffleArray(tracks);
-      setQueue(shuffled, 0);
+      setQueue(shuffled, 0, "playlist", pl.id);
       playTrack(shuffled[0]);
       toast("🔀", "Перемешано");
     });
@@ -2169,6 +2206,54 @@
   });
 
   $btnFav.addEventListener("click", async () => { if (cur) await toggleFavorite(cur); });
+
+  $btnRemovePl.addEventListener("click", async () => {
+    if (!cur || !currentPlaylistId) return;
+
+    const trackId = cur.id;
+    const trackName = cur.title || "трек";
+
+    try {
+      await api("DELETE", `/api/playlists/${currentPlaylistId}/tracks/${trackId}`);
+
+      // Убираем из текущей очереди
+      const removedIdx = currentQueue.findIndex(t => String(t.id) === String(trackId));
+      currentQueue = currentQueue.filter(t => String(t.id) !== String(trackId));
+
+      toast("✅", `«${trackName}» убран из плейлиста`);
+      haptic("light");
+
+      // Обновляем плейлисты в фоне
+      loadPlaylists();
+
+      // Если открыт этот плейлист — обновить
+      if (currentPlaylistDetail && currentPlaylistDetail.id === currentPlaylistId) {
+        openPlaylistDetail(currentPlaylistId);
+      }
+
+      // Переключаемся на следующий трек
+      if (currentQueue.length > 0) {
+        // Корректируем индекс
+        if (currentIndex >= currentQueue.length) {
+          currentIndex = 0;
+        }
+        playTrack(currentQueue[currentIndex]);
+      } else {
+        // Очередь пуста — стоп
+        audio.pause();
+        audio.src = "";
+        cur = null;
+        setPlaying(false);
+        $player.classList.add("hidden");
+        currentPlaySource = "search";
+        currentPlaylistId = null;
+        syncRemoveButton();
+      }
+    } catch (e) {
+      console.error("remove from playlist", e);
+      toast("❌", "Ошибка удаления");
+    }
+  });
 
   $progressHit.addEventListener("click", (e) => {
     if (!audio.duration) return;
