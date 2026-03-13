@@ -681,6 +681,29 @@
       line-height:1.45;
     }
 
+    /* ── Powered by badge ── */
+    .powered-by {
+      display: block;
+      margin-top: 2px;
+      font-size: 9.5px;
+      font-weight: 400;
+      letter-spacing: .08em;
+      color: rgba(145,164,199,.45);
+      text-decoration: none;
+      transition: color .2s ease;
+    }
+    .powered-by:hover {
+      color: rgba(145,164,199,.7);
+    }
+    .powered-by span {
+      font-weight: 600;
+      color: rgba(145,164,199,.55);
+      transition: color .2s ease;
+    }
+    .powered-by:hover span {
+      color: rgba(139,92,246,.7);
+    }
+
     /* ── Toast ── */
     .toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;pointer-events:none;}
     .toast{
@@ -747,6 +770,7 @@
       <div>
         <div class="logo">PepperMusic</div>
         <div class="logo-sub">soundcloud & youtube music</div>
+        <a href="https://t.me/asphyxianetbot" target="_blank" rel="noopener" class="powered-by">POWERED BY <span>ASPHYXIA NETWORK</span></a>
       </div>
     </div>
   </header>
@@ -769,7 +793,7 @@
       </div>
       <div class="source-chips">
         <button class="source-chip active" data-source="all"><span class="chip-dot chip-dot-all"></span>Все</button>
-        <button class="source-chip" data-source="soundcloud"><span class="chip-dot chip-dot-sc"></span>SoundCloud</button>
+        <button class="source-chip" data-source="soundcloud"><span class="chip-dot chip-dot-sc"></span>SC</button>
         <button class="source-chip" data-source="deezer"><span class="chip-dot chip-dot-sp"></span>Deezer</button>
         <button class="source-chip" data-source="youtube"><span class="chip-dot chip-dot-yt"></span>YT Music</button>
       </div>

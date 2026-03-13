@@ -187,30 +187,30 @@ async def cmd_start(message: Message):
         "👋 Привет! Я <b>PepperMusic</b> 🎧\nНажми кнопку, чтобы открыть плеер!",
         reply_markup=kb.as_markup(), parse_mode="HTML",
     )
+    
 @dp.message(Command("admin_stats"))
 async def cmd_stats(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
     now = int(time.time())
-    lines = ["📊 <b>PepperMusic</b>"]
-    for lbl, s in [("24 ч", 86400), ("7 д", 604800), ("30 д", 2592000)]:
+    lines = ["📊 <b>PepperMusic — Статистика</b>", ""]
+    for lbl, s in [
+        ("24 ч",  86400),
+        ("3 д",   259200),
+        ("7 д",   604800),
+        ("14 д",  1209600),
+        ("30 д",  2592000),
+    ]:
         since = now - s
         lines.append(
-            f"\n<b>{lbl}</b>  👥 {db.unique_users(since)}  "
-            f"🆕 {db.new_users(since)}  🔎 {db.count_action('search', since)}  "
-            f"▶️ {db.count_action('stream', since)}  ⬇️ {db.count_action('download_success', since)}"
+            f"<b>⏱ {lbl}:</b>\n"
+            f"  👤 Уникальных: {db.unique_users(since)}\n"
+            f"  🆕 Новых: {db.new_users(since)}\n"
+            f"  🎧 Прослушиваний: {db.count_action('stream', since)}"
         )
-    tq = db.top_queries(now - 604800, 5)
-    if tq:
-        lines.append("\n🔎 <b>Топ запросов (7 д)</b>")
-        for q, c in tq:
-            lines.append(f"  • {q} — <b>{c}</b>")
-    tt = db.top_tracks(now - 604800, 5)
-    if tt:
-        lines.append("\n🎵 <b>Топ треков (7 д)</b>")
-        for t, c in tt:
-            lines.append(f"  • {t} — <b>{c}</b>")
+        lines.append("")
     await message.answer("\n".join(lines), parse_mode="HTML")
+
 @dp.message()
 async def fallback(message: Message):
     if message.text and message.text.startswith("/"):
