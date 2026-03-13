@@ -440,21 +440,6 @@ def _normalize_import_words(s: str) -> set:
         s = s.replace(ch, " ")
     return {w for w in s.split() if len(w) > 1}
 
-
-def _import_match_score(
-    query_artist: str,
-    query_title: str,
-    found_artist: str,
-    found_title: str,
-) -> float:
-    q_words = _normalize_import_words(query_artist) | _normalize_import_words(query_title)
-    f_words = _normalize_import_words(found_artist) | _normalize_import_words(found_title)
-    if not q_words or not f_words:
-        return 0.0
-    forward = len(q_words & f_words) / len(q_words)
-    backward = len(q_words & f_words) / len(f_words)
-    return forward * 0.6 + backward * 0.4
-
 def _import_match_score(
     query_artist: str,
     query_title: str,
@@ -474,32 +459,11 @@ def _pick_best_import_result(results: list, ym_track: dict, min_text_score: floa
     if not results:
         return None
 
-def _pick_best_import_result(results: list, ym_track: dict, min_text_score: float = 0.3):
-    if not results:
-        return None
-
-    expected = ym_track.get("duration_sec", 0)
-    q_artist = ym_track.get("artist", "")
-    q_title = ym_track.get("title", "")
-    query_text = f"{q_artist} {q_title}".lower()
     expected = ym_track.get("duration_sec", 0)
     q_artist = ym_track.get("artist", "")
     q_title = ym_track.get("title", "")
     query_text = f"{q_artist} {q_title}".lower()
 
-    scored = []
-    for t in results:
-        text_score = _import_match_score(
-            q_artist,
-            q_title,
-            t.get("artist", ""),
-            t.get("title", ""),
-        )
-        if expected > 0 and t.get("duration_sec", 0) > 0:
-            diff = abs(t["duration_sec"] - expected)
-            dur_score = max(0, 1.0 - diff / max(expected, 60))
-        else:
-            dur_score = 0.5
     scored = []
     for t in results:
         text_score = _import_match_score(
@@ -520,35 +484,14 @@ def _pick_best_import_result(results: list, ym_track: dict, min_text_score: floa
             if kw in candidate_text and kw not in query_text:
                 penalty += pw
         penalty = min(penalty, _IMPORT_PENALTY_MAX)
-        candidate_text = f"{t.get('title', '')} {t.get('artist', '')}".lower()
-        penalty = 0.0
-        for kw, pw in _IMPORT_PENALTY_KW.items():
-            if kw in candidate_text and kw not in query_text:
-                penalty += pw
-        penalty = min(penalty, _IMPORT_PENALTY_MAX)
 
-        src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
-        total_score = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
-        scored.append((t, total_score, text_score, dur_score, penalty))
         src_bonus = _IMPORT_SRC_BONUS.get(t.get("source", ""), 0.0)
         total_score = text_score * 0.7 + dur_score * 0.3 + src_bonus - penalty
         scored.append((t, total_score, text_score, dur_score, penalty))
 
     scored.sort(key=lambda x: x[1], reverse=True)
     best, total_s, text_sc, dur_sc, pen = scored[0]
-    scored.sort(key=lambda x: x[1], reverse=True)
-    best, total_s, text_sc, dur_sc, pen = scored[0]
 
-    log.info(
-        "  Match: '%.40s' by '%.30s' [%s] → text=%.2f dur=%.2f pen=%.2f total=%.2f",
-        best.get("title", "?"),
-        best.get("artist", "?"),
-        best.get("source", "?"),
-        text_sc,
-        dur_sc,
-        pen,
-        total_s,
-    )
     log.info(
         "  Match: '%.40s' by '%.30s' [%s] → text=%.2f dur=%.2f pen=%.2f total=%.2f",
         best.get("title", "?"),
@@ -571,19 +514,7 @@ def _pick_best_import_result(results: list, ym_track: dict, min_text_score: floa
             ym_track.get("title", "?"),
         )
         return None
-    if text_sc < min_text_score:
-        log.warning(
-            "  REJECTED (text_score=%.2f < %.2f): '%s - %s' ≠ '%s - %s'",
-            text_sc,
-            min_text_score,
-            best.get("artist", "?"),
-            best.get("title", "?"),
-            ym_track.get("artist", "?"),
-            ym_track.get("title", "?"),
-        )
-        return None
 
-    return best
     return best
 
 
@@ -593,14 +524,6 @@ async def _safe_import_search(func, query, limit):
     except Exception as e:
         log.warning("Import search failed (%s): %s", func.__module__, e)
         return []
-
-async def _safe_import_search(func, query, limit):
-    try:
-        return await retry_async(func, query, limit=limit, retries=2)
-    except Exception as e:
-        log.warning("Import search failed (%s): %s", func.__module__, e)
-        return []
-
 
 def _import_tracks_stream(
     *,
@@ -641,12 +564,6 @@ def _import_tracks_stream(
             "name": playlist_name,
             "source": source_label,
         }) + "\n\n"
-        yield "data: " + _json.dumps({
-            "type": "start",
-            "total": total,
-            "name": playlist_name,
-            "source": source_label,
-        }) + "\n\n"
 
         batch_size = 10
         for batch_start in range(0, total, batch_size):
@@ -676,21 +593,10 @@ def _import_tracks_stream(
                     "track": track_name,
                     "found": track is not None,
                 }) + "\n\n"
-                yield "data: " + _json.dumps({
-                    "type": "progress",
-                    "current": current,
-                    "total": total,
-                    "imported": imported,
-                    "track": track_name,
-                    "found": track is not None,
-                }) + "\n\n"
 
         ms = int((time.monotonic() - t0) * 1000)
         db.log_event(user, source_label, query=source_url, ok=True, ms=ms)
         log.info(
-            "Import [%s]: '%s' → %d/%d tracks in %dms",
-            source_label,
-            playlist_name,
             "Import [%s]: '%s' → %d/%d tracks in %dms",
             source_label,
             playlist_name,
@@ -699,14 +605,6 @@ def _import_tracks_stream(
             ms,
         )
 
-        yield "data: " + _json.dumps({
-            "type": "done",
-            "playlist_id": playlist_id,
-            "name": playlist_name,
-            "total": total,
-            "imported": imported,
-            "source": source_label,
-        }) + "\n\n"
         yield "data: " + _json.dumps({
             "type": "done",
             "playlist_id": playlist_id,
@@ -739,26 +637,39 @@ async def _cleanup_import_tasks():
 
 def _ocr_extract_lines(text: str) -> list[str]:
     lines = []
+
     for raw in (text or "").splitlines():
         s = raw.strip()
         if not s:
             continue
 
-        # Убираем нумерацию в начале: 1. / 01 / 1)
+        # убираем нумерацию в начале
         s = re.sub(r"^\s*\d+[\.\)]?\s*", "", s)
 
-        # Убираем длительность в конце: 3:45 / 12:03
+        # убираем длительность в конце
         s = re.sub(r"\s+\d{1,2}:\d{2}$", "", s)
 
-        # Нормализуем тире
-        s = s.replace("—", " - ").replace("–", " - ")
+        # нормализуем OCR-мусорные тире
+        s = s.replace("—", "-").replace("–", "-").replace("−", "-")
+        s = re.sub(r"\s*-\s*", " - ", s)
+
+        # чистим лишние пробелы
         s = re.sub(r"\s+", " ", s).strip()
 
-        # Берем только строки, где похоже есть "artist - title"
-        if " - " in s and len(s) >= 5:
-            lines.append(s)
+        # фильтруем слишком короткий мусор
+        if len(s) < 4:
+            continue
 
-    # убираем дубли, сохраняя порядок
+        # выкидываем типичный UI-мусор
+        low = s.lower()
+        if low in {
+            "shuffle", "repeat", "search", "explicit", "playlist",
+            "поделиться", "добавить", "слушать", "играть"
+        }:
+            continue
+
+        lines.append(s)
+
     seen = set()
     out = []
     for s in lines:
@@ -767,38 +678,71 @@ def _ocr_extract_lines(text: str) -> list[str]:
             continue
         seen.add(k)
         out.append(s)
+
     return out
 
 
 def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
     tracks = []
+
     for line in lines:
-        if " - " not in line:
+        s = line.strip()
+
+        # нормализация тире
+        s = s.replace("—", "-").replace("–", "-").replace("−", "-")
+        s = re.sub(r"\s*-\s*", " - ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+
+        if " - " not in s:
             continue
-        artist, title = line.split(" - ", 1)
+
+        artist, title = s.split(" - ", 1)
         artist = artist.strip(" -")
         title = title.strip(" -")
-        if not artist or not title:
+
+        # слишком короткие / мусорные куски отбрасываем
+        if len(artist) < 2 or len(title) < 2:
             continue
+
+        # явный UI-мусор тоже отбрасываем
+        low = f"{artist} {title}".lower()
+        if any(bad in low for bad in ["поделиться", "добавить", "playlist", "shuffle", "repeat"]):
+            continue
+
         tracks.append({
             "artist": artist,
             "title": title,
             "duration_sec": 0,
             "search_query": f"{artist} - {title}",
         })
+
     return tracks
 
 
 def _ocr_image_to_text(image_bytes: bytes) -> str:
     img = Image.open(io.BytesIO(image_bytes)).convert("L")
+
+    # усиливаем контраст и чистим мелкий мусор
     img = ImageOps.autocontrast(img)
+    img = img.filter(ImageFilter.MedianFilter(size=3))
     img = img.filter(ImageFilter.SHARPEN)
 
-    # слегка увеличиваем, чтобы OCR лучше читал мелкий UI-текст
+    # увеличиваем изображение
     w, h = img.size
-    img = img.resize((max(w * 2, 1200), max(h * 2, 1200)))
+    scale = 2.5
+    img = img.resize((int(w * scale), int(h * scale)))
 
-    return pytesseract.image_to_string(img, lang="eng+rus")
+    # бинаризация для более стабильного OCR на UI-скринах
+    img = img.point(lambda p: 255 if p > 160 else 0)
+
+    config = "--oem 3 --psm 6"
+
+    text_rus_eng = pytesseract.image_to_string(img, lang="rus+eng", config=config)
+    text_eng = pytesseract.image_to_string(img, lang="eng", config=config)
+
+    # иногда rus+eng работает хуже, чем чистый eng, поэтому склеиваем
+    combined = "\n".join([text_rus_eng or "", text_eng or ""]).strip()
+    return combined
 
 @app.get("/api/import/yandex/status/{task_id}")
 async def api_import_status(task_id: str, user: dict = Depends(get_user)):
@@ -871,6 +815,8 @@ async def api_import_yandex_screenshot(
 
     try:
         text = await asyncio.to_thread(_ocr_image_to_text, data)
+        preview = (text or "").replace("\n", " | ")[:500]
+        log.info("Screenshot OCR text preview: %s", preview)
     except Exception as exc:
         log.error("Yandex screenshot OCR failed: %s", exc, exc_info=True)
         raise HTTPException(500, "Не удалось распознать скриншот")
@@ -879,7 +825,7 @@ async def api_import_yandex_screenshot(
     tracks = _ocr_lines_to_tracks(lines)
 
     log.info(
-        "Yandex screenshot OCR: user=%s lines=%d tracks=%d",
+        "Screenshot import OCR: user=%s lines=%d tracks=%d",
         user["id"],
         len(lines),
         len(tracks),
@@ -893,9 +839,9 @@ async def api_import_yandex_screenshot(
 
     return _import_tracks_stream(
         user=user,
-        source_label="import_yandex_screenshot",
+        source_label="import_screenshot",
         source_url="screenshot",
-        playlist_name=name.strip() or "Яндекс Музыка",
+        playlist_name=name.strip() or "Импорт по скриншоту",
         source_tracks=tracks,
     )
 

@@ -30,7 +30,7 @@
       --shadow: 0 18px 60px rgba(0,0,0,.36);
       --radius: 22px;
       --radius-sm: 16px;
-      --player-h: 184px;
+      --player-h: 158px;
     }
 
     *{box-sizing:border-box;margin:0;padding:0;}
@@ -281,22 +281,17 @@
 
     .t-side{display:flex;align-items:center;gap:6px;z-index:1;}
 
-    .icon-stack,.icon-btn,.t-fav,.t-action,.t-add-pl{
+    .icon-stack,.icon-btn,.t-fav,.t-add-pl{
       border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);
       display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
       transition:all .15s ease;
     }
-    .t-fav,.t-action,.t-add-pl{width:38px;height:38px;border-radius:13px;}
-    .t-action{
-      background:linear-gradient(135deg,var(--accent),#5b67ff);border-color:transparent;
-      box-shadow:0 10px 22px rgba(91,103,255,.28);
-    }
-    .t-action svg,.t-fav svg,.t-add-pl svg,.icon-btn svg{width:16px;height:16px;fill:currentColor;}
+    .t-fav,.t-add-pl{width:38px;height:38px;border-radius:13px;}
+    .t-fav svg,.t-add-pl svg,.icon-btn svg{width:16px;height:16px;fill:currentColor;}
     .t-fav{color:var(--muted);}
     .t-fav.active,.fav-btn.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
     .t-add-pl{color:var(--muted);}
     .t-add-pl:hover{color:var(--accent);border-color:rgba(139,92,246,.3);}
-    .track.playing .t-action{background:linear-gradient(135deg,var(--accent-2),#0ea5e9);}
 
     .t-remove-pl {
       width: 38px; height: 38px; border-radius: 13px;
@@ -438,7 +433,7 @@
       box-shadow:0 24px 70px rgba(0,0,0,.52),0 0 0 1px rgba(255,255,255,.03) inset,
                  0 -10px 30px rgba(34,211,238,.05) inset;
       backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
-      padding:12px;
+      padding:10px 10px 9px;
     }
     .player-shell::before{
       content:"";position:absolute;inset:0;
@@ -447,9 +442,9 @@
       pointer-events:none;
     }
 
-    .player-center-row{display:grid;grid-template-columns:72px minmax(0,1fr);gap:14px;align-items:center;}
+    .player-center-row{display:grid;grid-template-columns:62px minmax(0,1fr);gap:12px;align-items:center;}
     .p-art{
-      width:72px;height:72px;border-radius:22px;object-fit:cover;
+      width:62px;height:62px;border-radius:18px;
       background:#10192d;border:1px solid rgba(255,255,255,.06);
       box-shadow:0 14px 32px rgba(0,0,0,.34),0 0 0 1px rgba(255,255,255,.03) inset;
     }
@@ -457,7 +452,7 @@
     .p-title{font-weight:800;font-size:15px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
     .p-artist{margin-top:5px;color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 
-    .player-progress-row{margin-top:12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;}
+    .player-progress-row{margin-top:9px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;}
     .player-progress-wrap{cursor:pointer;min-width:0;}
     .player-progress-track{height:8px;width:100%;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden;box-shadow:inset 0 1px 2px rgba(0,0,0,.2);}
     .player-progress-fill{width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent-2));box-shadow:0 0 18px rgba(34,211,238,.25);transition:width .1s linear;}
@@ -471,9 +466,9 @@
     .player-pill-dot{width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.22);}
 
     .player-controls-row{
-      margin-top:14px;display:grid;
-      grid-template-columns:38px 38px 52px 38px 38px minmax(80px,1fr) 38px 38px;
-      gap:8px;align-items:center;
+      margin-top:10px;display:grid;
+      grid-template-columns:36px 36px 48px 36px 36px 36px 36px;
+      gap:8px;align-items:center;justify-content:space-between;
     }
 
     .player-icon-btn{
@@ -495,14 +490,6 @@
     }
     .player-main-btn svg{width:20px;height:20px;}
     .icon-play.hidden,.icon-pause.hidden{display:none;}
-
-    .player-volume-inline{
-      height:38px;border-radius:13px;display:grid;grid-template-columns:auto 1fr;
-      align-items:center;gap:8px;padding:0 10px;
-      background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);min-width:0;
-    }
-    .player-volume-label{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.08em;}
-    .volume-slider{width:100%;accent-color:var(--accent-2);cursor:pointer;}
 
     .fav-btn.active{color:var(--danger);border-color:rgba(251,113,133,.34);background:rgba(251,113,133,.12);}
     #btn-dl.ok{color:var(--accent-3);border-color:rgba(34,197,94,.36);}
@@ -761,11 +748,6 @@
           <svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11V9a4 4 0 0 1 4-4h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 23l-4-4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 13v2a4 4 0 0 1-4 4H3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
 
-        <div class="player-volume-inline">
-          <span class="player-volume-label">VOL</span>
-          <input id="volume" class="volume-slider" type="range" min="0" max="1" step="0.01" value="1"/>
-        </div>
-
         <button id="btn-dl" class="player-icon-btn player-ghost" title="Отправить в чат" aria-label="Отправить в чат">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         </button>
@@ -820,12 +802,12 @@
 
       <div id="import-ym-panel-shot" class="ym-import-panel hidden">
         <label class="ym-upload-box" for="import-ym-file">
-          <input id="import-ym-file" type="file" accept="image/*" hidden />
-          <div class="ym-upload-title">Загрузи скриншот списка треков</div>
+        <div class="ym-upload-title">Загрузи скриншот со списком треков</div>
+        <div class="ym-upload-subtitle">Подойдет любой список треков, где читаются названия и исполнители</div>
           <div class="ym-upload-subtitle">Лучше, если на скриншоте видны строки вида Artist — Title</div>
         </label>
         <div id="import-ym-file-name" class="modal-status"></div>
-        <button id="import-ym-shot-submit" class="modal-submit" disabled>Распознать и импортировать</button>
+        <button id="import-ym-shot-submit" class="modal-submit" disabled>Найти треки по скриншоту</button>
       </div>
 
       <div id="import-ym-status" class="modal-status"></div>
@@ -1155,7 +1137,6 @@
             </div>
             <div class="t-side">
               <button class="t-fav active" data-id="${esc(String(t.id))}"><svg viewBox="0 0 24 24"><path d="M12 21s-6.716-4.35-9.193-8.091C.812 9.824 2.002 5.5 5.9 4.427 8.161 3.805 10.112 4.75 12 6.7c1.888-1.95 3.839-2.895 6.1-2.273 3.898 1.073 5.088 5.397 3.093 8.482C18.716 16.65 12 21 12 21z"/></svg></button>
-              <button class="t-action">${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}</button>
             </div>
           </article>`;
         }).join("")}
@@ -1231,9 +1212,6 @@
             </button>
             <button class="t-fav${isFav(t.id) ? " active" : ""}" data-id="${esc(String(t.id))}" title="В избранное" aria-label="В избранное">
               <svg viewBox="0 0 24 24"><path d="M12 21s-6.716-4.35-9.193-8.091C.812 9.824 2.002 5.5 5.9 4.427 8.161 3.805 10.112 4.75 12 6.7c1.888-1.95 3.839-2.895 6.1-2.273 3.898 1.073 5.088 5.397 3.093 8.482C18.716 16.65 12 21 12 21z"/></svg>
-            </button>
-            <button class="t-action" data-id="${esc(String(t.id))}" aria-label="Play">
-              ${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}
             </button>
           </div>
         </article>`;
@@ -1541,9 +1519,6 @@
               <button class="t-remove-pl" data-id="${esc(String(t.id))}" data-plid="${esc(pl.id)}" title="Убрать из плейлиста">
                 <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="10" y1="11" x2="10" y2="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="14" y1="11" x2="14" y2="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               </button>
-              <button class="t-action" data-id="${esc(String(t.id))}" aria-label="Play">
-                ${active && isPlaying ? eqHTML(false) : '<svg viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>'}
-              </button>
             </div>
           </article>`;
       }).join("");
@@ -1777,7 +1752,7 @@
       if (!file) return;
 
       $importYMShotSubmit.disabled = true;
-      $importYMStatus.textContent = "⏳ Распознаю скриншот...";
+      $importYMStatus.textContent = "⏳ Распознаю треки на скриншоте...";
 
       try {
         const fd = new FormData();

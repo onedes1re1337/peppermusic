@@ -43,7 +43,6 @@
   const $btnRepeat = $("btn-repeat");
   const $btnDL = $("btn-dl");
   const $btnFav = $("btn-fav");
-  const $volume = $("volume");
   const $progressHit = $("progress-hit");
 
   const $modalCreatePl = $("modal-create-pl");
@@ -523,21 +522,6 @@
       }
     });
     syncFavoriteButtons();
-  }
-
-  // ── Volume ──
-  function initVolume() {
-    let vol = 1;
-    try { const raw = localStorage.getItem(STORAGE_KEYS.volume); if (raw !== null) vol = Number(raw); } catch (_) {}
-    if (!Number.isFinite(vol)) vol = 1;
-    vol = Math.max(0, Math.min(1, vol));
-    audio.volume = vol;
-    $volume.value = String(vol);
-    $volume.addEventListener("input", () => {
-      const v = Math.max(0, Math.min(1, Number($volume.value)));
-      audio.volume = v;
-      localStorage.setItem(STORAGE_KEYS.volume, String(v));
-    });
   }
 
   // ── Search ──
@@ -1261,7 +1245,6 @@
   audio.addEventListener("ended", () => playNext());
 
   // ── Init ──
-  initVolume();
   loadFavorites();
   loadPlaylists();
   if (!HAS_TG) setTimeout(() => $q.focus(), 250);
