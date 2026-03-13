@@ -466,9 +466,11 @@
     .player-pill-dot{width:4px;height:4px;border-radius:50%;background:rgba(255,255,255,.22);}
 
     .player-controls-row{
-      margin-top:10px;display:grid;
-      grid-template-columns:36px 36px 48px 36px 36px 36px 36px;
-      gap:8px;align-items:center;justify-content:space-between;
+      margin-top:10px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
     }
 
     .player-icon-btn{
@@ -631,29 +633,22 @@
       .mini-player:not(.hidden){transform:translate(-50%,0);}
     }
     @media(max-width:620px){
-      .player-controls-row{
-        grid-template-columns:34px 34px 46px 34px 34px 1fr 34px 34px;
-        gap:6px;
-      }
-      .player-icon-btn{width:34px;height:34px;border-radius:11px;}
-      .player-icon-btn svg{width:15px;height:15px;}
-      .player-main-btn{width:46px;height:46px;border-radius:15px;}
+      .player-controls-row{ gap:6px; }
+      .player-icon-btn{width:36px;height:36px;border-radius:12px;}
+      .player-icon-btn svg{width:16px;height:16px;}
+      .player-main-btn{width:48px;height:48px;border-radius:16px;}
       .player-main-btn svg{width:18px;height:18px;}
-      .p-art{width:64px;height:64px;border-radius:18px;}
-      .player-center-row{grid-template-columns:64px minmax(0,1fr);}
+      .p-art{width:58px;height:58px;border-radius:16px;}
+      .player-center-row{grid-template-columns:58px minmax(0,1fr);}
     }
     @media(max-width:480px){
       :root{--player-h:196px;}
       .player-shell{border-radius:26px;padding:11px;}
-      .player-controls-row{
-        grid-template-columns:32px 32px 44px 32px 32px 1fr 32px 32px;
-        gap:5px;
-      }
-      .player-icon-btn{width:32px;height:32px;border-radius:10px;}
+      .player-controls-row{ gap:4px; }
+      .player-icon-btn{width:34px;height:34px;border-radius:10px;}
       .player-icon-btn svg{width:14px;height:14px;}
       .player-main-btn{width:44px;height:44px;border-radius:14px;}
-      .player-volume-inline{padding:0 8px;gap:6px;}
-      .player-volume-label{font-size:9px;}
+      .player-main-btn svg{width:16px;height:16px;}
       .tabs{gap:4px;}
       .tab{padding:10px 6px;font-size:12px;}
     }
@@ -728,7 +723,15 @@
 
       <div class="player-controls-row">
         <button id="btn-shuffle" class="player-icon-btn player-ghost" title="Перемешать" aria-label="Shuffle">
-          <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L20.2 3.8M21 16v5h-5M15 15l5.1 5.1M4 4l5 5"/><path d="M16 3h5v5M21 16v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 24 24">
+            <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 3 21 3 21 8"/>
+              <line x1="4" y1="20" x2="21" y2="3"/>
+              <polyline points="21 16 21 21 16 21"/>
+              <line x1="15" y1="15" x2="21" y2="21"/>
+              <line x1="4" y1="4" x2="9" y2="9"/>
+            </g>
+          </svg>
         </button>
 
         <button id="btn-prev" class="player-icon-btn player-ghost" title="Назад" aria-label="Назад">
@@ -749,7 +752,13 @@
         </button>
 
         <button id="btn-dl" class="player-icon-btn player-ghost" title="Отправить в чат" aria-label="Отправить в чат">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <svg viewBox="0 0 24 24">
+            <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </g>
+          </svg>
         </button>
 
         <button id="btn-fav" class="player-icon-btn player-ghost fav-btn" title="В избранное" aria-label="В избранное">
@@ -911,8 +920,6 @@
 
   const audio = new Audio();
   audio.preload = "auto";
-
-  const STORAGE_KEYS = { volume: "peppermusic:volume" };
 
   const FALLBACK_ART =
     "data:image/svg+xml;charset=UTF-8," +
@@ -1458,7 +1465,7 @@
             <button class="pl-shuffle-btn" id="pl-shuffle-btn" title="Перемешать">
               <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L20.2 3.8M21 16v5h-5M15 15l5.1 5.1M4 4l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="pl-play-all" id="pl-play-all">▶ Играть</button>
+            <button class="pl-play-all" id="pl-play-all">▶</button>
           ` : ""}
         </div>
       </div>`;
