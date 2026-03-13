@@ -320,8 +320,108 @@
     .eq.paused .eq-bar{animation-play-state:paused;}
     @keyframes eqPulse{from{transform:scaleY(.35)}to{transform:scaleY(1)}}
 
-    /* ── Playlist cards ── */
-    .playlist-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+    /* ── Playlist grid ── */
+    .playlist-grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:10px;
+      padding:4px 0;
+    }
+
+    .pl-card-new{
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      padding:18px 10px;
+      border-radius:20px;
+      cursor:pointer;
+      transition:all .15s ease;
+      font-size:12px;
+      font-weight:700;
+      text-align:center;
+      min-height:100px;
+    }
+    .pl-card-new svg{
+      width:22px;height:22px;
+      stroke:currentColor;stroke-width:2;
+      stroke-linecap:round;stroke-linejoin:round;
+      fill:none;
+    }
+
+    /* ── Новый плейлист — фиолетовый ── */
+    .pl-card-new.pl-new-create{
+      border:1.5px dashed rgba(139,92,246,.35);
+      background:rgba(139,92,246,.06);
+      color:rgba(139,92,246,.9);
+    }
+    .pl-card-new.pl-new-create:hover{
+      background:rgba(139,92,246,.12);
+      border-color:rgba(139,92,246,.5);
+    }
+
+    /* ── Импорт — бирюзовый ── */
+    .pl-card-new.pl-new-import{
+      border:1.5px dashed rgba(34,211,238,.3);
+      background:rgba(34,211,238,.05);
+      color:rgba(34,211,238,.85);
+    }
+    .pl-card-new.pl-new-import:hover{
+      background:rgba(34,211,238,.12);
+      border-color:rgba(34,211,238,.45);
+    }
+
+    /* ── Карточки плейлистов ── */
+    .pl-card{
+      border-radius:20px;
+      border:1px solid var(--border);
+      background:rgba(255,255,255,.03);
+      padding:10px;
+      cursor:pointer;
+      transition:all .15s ease;
+    }
+    .pl-card:hover{
+      background:rgba(139,92,246,.08);
+      border-color:rgba(139,92,246,.25);
+    }
+
+    .pl-art-grid{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      grid-template-rows:1fr 1fr;
+      gap:3px;
+      border-radius:14px;
+      overflow:hidden;
+      aspect-ratio:1;
+      margin-bottom:8px;
+    }
+    .pl-art-grid img{
+      width:100%;height:100%;
+      object-fit:cover;
+      display:block;
+    }
+    .pl-art-empty{
+      background:rgba(255,255,255,.04);
+      display:flex;align-items:center;justify-content:center;
+    }
+    .pl-art-empty svg{
+      width:18px;height:18px;
+      fill:rgba(255,255,255,.12);
+    }
+
+    .pl-card-name{
+      font-size:13px;
+      font-weight:700;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .pl-card-count{
+      font-size:11px;
+      color:var(--muted);
+      margin-top:2px;
+    }
     .modal-status{min-height:20px;margin:10px 2px 0;font-size:13px;line-height:1.4;color:var(--muted,#6b7280);}
     @media(max-width:400px){.playlist-grid{grid-template-columns:1fr;}}
 
@@ -1094,7 +1194,7 @@
       }
     }
   });
-  
+
   let _scrollBlurTimer = null;
 
 
@@ -1522,14 +1622,13 @@
   function renderPlaylists() {
     let html = '<div class="playlist-grid">';
 
-    // Create new card
-    html += `<div class="pl-card-new" id="pl-create-btn">
+    html += `<div class="pl-card-new pl-new-create" id="pl-create-btn">
       <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       <span>Новый плейлист</span>
     </div>`;
 
-    html += `<div class="pl-card-new" id="pl-import-ym-btn">
-      <svg viewBox="0 0 24 24"><path d="M12 3v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m8 9 4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 19h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    html += `<div class="pl-card-new pl-new-import" id="pl-import-ym-btn">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10"/><path d="m8 9 4 4 4-4"/><path d="M5 19h14"/></svg>
       <span>Импорт из Я.Музыки</span>
     </div>`;
 
