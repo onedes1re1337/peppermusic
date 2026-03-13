@@ -187,13 +187,18 @@ async def cmd_start(message: Message):
         "👋 Привет! Я <b>PepperMusic</b> 🎧\nНажми кнопку, чтобы открыть плеер!",
         reply_markup=kb.as_markup(), parse_mode="HTML",
     )
-    
+
 @dp.message(Command("admin_stats"))
 async def cmd_stats(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
     now = int(time.time())
-    lines = ["📊 <b>PepperMusic — Статистика</b>", ""]
+    lines = [
+        "📊 <b>PepperMusic — Статистика</b>",
+        "",
+        f"👥 Всего пользователей: <b>{db.total_users()}</b>",
+        "",
+    ]
     for lbl, s in [
         ("24 ч",  86400),
         ("3 д",   259200),

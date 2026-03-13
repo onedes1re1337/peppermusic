@@ -423,6 +423,9 @@ def unique_users(since: int) -> int:
     ).fetchone()
     return int(r["v"] or 0)
 
+def total_users() -> int:
+    row = _con().execute("SELECT COUNT(*) FROM users").fetchone()
+    return row[0] if row else 0
 
 def new_users(since: int) -> int:
     c = _con()
