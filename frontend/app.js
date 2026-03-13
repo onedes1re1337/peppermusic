@@ -1328,16 +1328,22 @@ let _renamePlId = null;
   audio.addEventListener("ended", () => playNext());
 
   document.addEventListener("touchstart", (e) => {
-    const target = e.target;
     if (
-      target.closest("input") ||
-      target.closest("textarea") ||
-      target.closest(".search-wrap") ||
-      target.closest(".modal-input")
-    ) {
-      return;
-    }
+      e.target.closest("input") ||
+      e.target.closest("textarea") ||
+      e.target.closest("[contenteditable]") ||
+      e.target.closest(".modal-sheet") ||
+      e.target.closest(".search-wrap")
+    ) return;
     hideKeyboard();
+  }, { passive: true });
+
+  let _scrollBlurTimer = null;
+  window.addEventListener("scroll", () => {
+    // Не закрываем клавиатуру если открыта модалка
+    if (document.querySelector(".modal-overlay.open")) return;
+    clearTimeout(_scrollBlurTimer);
+    _scrollBlurTimer = setTimeout(hideKeyboard, 60);
   }, { passive: true });
 
   document.addEventListener("click", (e) => {

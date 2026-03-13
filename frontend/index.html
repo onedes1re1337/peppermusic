@@ -1079,25 +1079,41 @@
     if (e.key === "Enter") {
       const tag = (e.target.tagName || "").toLowerCase();
       if (tag === "input" || tag === "textarea") {
+        // Не закрываем если инпут внутри модалки — пусть сабмит обработает
+        if (e.target.closest(".modal-sheet")) {
+          // Тригерим кнопку сабмита рядом
+          const sheet = e.target.closest(".modal-sheet");
+          const submitBtn = sheet.querySelector(".modal-submit:not(:disabled)");
+          if (submitBtn) {
+            e.preventDefault();
+            submitBtn.click();
+          }
+          return;
+        }
         e.target.blur();
       }
     }
   });
-
+  
   let _scrollBlurTimer = null;
 
-  window.addEventListener("scroll", () => {
-    clearTimeout(_scrollBlurTimer);
-    _scrollBlurTimer = setTimeout(hideKeyboard, 60);
-  }, { passive: true });
 
   document.addEventListener("touchstart", (e) => {
     if (
       e.target.closest("input") ||
       e.target.closest("textarea") ||
-      e.target.closest("[contenteditable]")
+      e.target.closest("[contenteditable]") ||
+      e.target.closest(".modal-sheet") ||
+      e.target.closest(".search-wrap")
     ) return;
     hideKeyboard();
+  }, { passive: true });
+
+  window.addEventListener("scroll", () => {
+    // Не закрываем клавиатуру если открыта модалка
+    if (document.querySelector(".modal-overlay.open")) return;
+    clearTimeout(_scrollBlurTimer);
+    _scrollBlurTimer = setTimeout(hideKeyboard, 60);
   }, { passive: true });
 
   // ═══════════════════════════════════════
