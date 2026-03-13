@@ -708,7 +708,7 @@ let _renamePlId = null;
             <button class="pl-shuffle-btn" id="pl-shuffle-btn" title="Перемешать">
               <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L20.2 3.8M21 16v5h-5M15 15l5.1 5.1M4 4l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
-            <button class="pl-play-all" id="pl-play-all">▶ Играть</button>
+            <button class="pl-play-all" id="pl-play-all">▶</button>
           ` : ""}
         </div>
       </div>`;
