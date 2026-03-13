@@ -60,6 +60,11 @@
   const $confirmOk = $("confirm-ok");
   let _confirmResolve = null;
 
+  const $modalRenamePl  = $("modal-rename-pl");
+const $renamePlName   = $("rename-pl-name");
+const $renamePlSubmit = $("rename-pl-submit");
+let _renamePlId = null;
+
   const $modalImportYM = $("modal-import-ym");
   const $importYMUrl = $("import-ym-url");
   const $importYMSubmit = $("import-ym-submit");
@@ -207,15 +212,6 @@
   $newPlName.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       hideKeyboard();
-    }
-  });
-
-  $importYMUrl?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      hideKeyboard();
-      if ($importYMUrl.value.trim()) {
-        startUrlImport();
-      }
     }
   });
 
@@ -650,6 +646,43 @@
     }
   }
 
+  function openRenamePlModal(plId, currentName) {
+    _renamePlId = plId;
+    $renamePlName.value = currentName || "";
+    $renamePlSubmit.disabled = !currentName?.trim();
+    openModal($modalRenamePl);
+    setTimeout(() => $renamePlName.focus(), 150);
+  }
+
+  $renamePlName.addEventListener("input", () => {
+    $renamePlSubmit.disabled = !$renamePlName.value.trim();
+  });
+
+  $renamePlSubmit.addEventListener("click", async () => {
+    const name = $renamePlName.value.trim();
+    if (!name || !_renamePlId) return;
+    $renamePlSubmit.disabled = true;
+    try {
+      await api("PATCH", `/api/playlists/${_renamePlId}`, { name });
+      toast("✏️", `Плейлист переименован в «${name}»`);
+      closeModal($modalRenamePl);
+      await loadPlaylists();
+      if (currentPlaylistDetail && currentPlaylistDetail.id === _renamePlId) {
+        currentPlaylistDetail.name = name;
+        renderPlaylistDetail(currentPlaylistDetail);
+      }
+      _renamePlId = null;
+    } catch (e) {
+      toast("❌", e.message || "Ошибка переименования");
+    } finally {
+      $renamePlSubmit.disabled = false;
+    }
+  });
+
+  $modalRenamePl?.addEventListener("click", (e) => {
+    if (e.target === $modalRenamePl) closeModal($modalRenamePl);
+  });
+
   function renderPlaylistDetail(pl) {
     const tracks = pl.tracks || [];
     let headerHTML = `
@@ -661,6 +694,12 @@
           <div class="pl-detail-name">${esc(pl.name)}</div>
           <div class="pl-detail-count">${tracks.length} треков</div>
         </div>
+        <button class="pl-edit-btn" id="pl-edit-btn" data-plid="${esc(pl.id)}" title="Переименовать">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+        </button>
         <div class="pl-detail-actions">
           <button class="pl-delete-btn" id="pl-delete-btn" data-plid="${esc(pl.id)}" title="Удалить плейлист">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
@@ -711,6 +750,7 @@
             </div>
           </article>`;
       }).join("");
+    }
 
       $list.innerHTML = headerHTML + tracksHTML;
       bindTrackEvents();
@@ -757,11 +797,15 @@
           }
         });
       });
-    }
 
     $("pl-back")?.addEventListener("click", () => {
       currentPlaylistDetail = null;
       loadPlaylists();
+    });
+
+    // ✏️ Переименовать
+    $("pl-edit-btn")?.addEventListener("click", () => {
+      openRenamePlModal(pl.id, pl.name);
     });
 
     $("pl-play-all")?.addEventListener("click", () => {
