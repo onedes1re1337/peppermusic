@@ -638,28 +638,67 @@ async def _cleanup_import_tasks():
     for k in to_remove:
         del _import_tasks[k]
 
+def _fix_mixed_script(s: str) -> str:
+    """Фикс OCR: в словах с перемешанными латиницей/кириллицей
+    приводим к доминирующему скрипту."""
+    lat_to_cyr = {
+        'A': 'А', 'B': 'В', 'C': 'С', 'E': 'Е', 'H': 'Н', 'K': 'К',
+        'M': 'М', 'O': 'О', 'P': 'Р', 'T': 'Т', 'X': 'Х',
+        'a': 'а', 'c': 'с', 'e': 'е', 'o': 'о', 'p': 'р', 'x': 'х', 'y': 'у',
+    }
+    cyr_to_lat = {v: k for k, v in lat_to_cyr.items()}
+
+    words = s.split()
+    fixed = []
+    for word in words:
+        cyr = sum(1 for c in word if '\u0400' <= c <= '\u04FF')
+        lat = sum(1 for c in word if ('A' <= c <= 'Z') or ('a' <= c <= 'z'))
+
+        if cyr > 0 and lat > 0:
+            if cyr >= lat:
+                word = ''.join(lat_to_cyr.get(c, c) for c in word)
+            else:
+                word = ''.join(cyr_to_lat.get(c, c) for c in word)
+
+        fixed.append(word)
+
+    return ' '.join(fixed)
+
 def _line_quality_score(s: str) -> float:
-    """0..1 — насколько строка похожа на настоящий текст (а не OCR-мусор)."""
     if not s or len(s) < 2:
         return 0.0
 
     total = len(s)
+
+    # Штраф за повторяющиеся символы (ооо, eeee, ааа)
+    for ch in set(s.lower()):
+        if ch.isalpha():
+            count = s.lower().count(ch)
+            ratio = count / total
+            if count >= 3 and ratio >= 0.6:
+                return 0.05
+
     letters = sum(1 for c in s if c.isalpha())
     letter_ratio = letters / total if total else 0
 
     normal = sum(1 for c in s if c.isalnum() or c in " ,.-!?'\"&")
     normal_ratio = normal / total if total else 0
 
-    words = re.findall(r'[a-zA-Zа-яА-ЯёЁ]{2,}', s)
-    word_score = min(1.0, len(words) * 0.2)
+    real_words = re.findall(r'[a-zA-Zа-яА-ЯёЁ]{2,}', s)
+    word_score = min(1.0, len(real_words) * 0.25)
 
+    # Штраф за мусорные края
     edge_pen = 0
     if not s[0].isalnum():
         edge_pen += 0.15
     if not s[-1].isalnum() and s[-1] not in "!?.":
         edge_pen += 0.10
 
-    score = letter_ratio * 0.35 + normal_ratio * 0.30 + word_score * 0.35 - edge_pen
+    # Штраф если строка — это год / дата
+    if re.match(r'^.{0,4}\d{4}\s*$', s):
+        return 0.1
+
+    score = letter_ratio * 0.35 + normal_ratio * 0.25 + word_score * 0.40 - edge_pen
     return max(0.0, min(1.0, score))
 
 def _ocr_extract_lines(text: str) -> list[str]:
@@ -670,6 +709,9 @@ def _ocr_extract_lines(text: str) -> list[str]:
         if not s:
             continue
 
+        # ── Автофикс Lat↔Cyr ──
+        s = _fix_mixed_script(s)
+
         # ── OCR-артефакты ──
         s = re.sub(r'[©®™°•·|_]+', ' ', s)
         s = re.sub(r'^[\s_\.\-\#\*…<>]+', '', s)
@@ -677,7 +719,7 @@ def _ocr_extract_lines(text: str) -> list[str]:
         s = re.sub(r'^\s*\d+[\.\)]\s*', '', s)
         s = re.sub(r'\s+\d{1,2}:\d{2}\s*$', '', s)
 
-        # Убираем одиночные символы на краях
+        # Одиночные символы на краях
         s = re.sub(r'^[^\w]{1,3}\s+', '', s)
         s = re.sub(r'\s+[^\w]{1,3}$', '', s)
 
@@ -688,8 +730,17 @@ def _ocr_extract_lines(text: str) -> list[str]:
         if len(s) < 3:
             continue
 
-        # ── UI-мусор ──
         low = s.lower()
+
+        # ── Повторяющиеся символы: ооо, eeee, ааа ──
+        if re.match(r'^(.)\1{2,}$', low):
+            continue
+
+        # ── Год/дата в заголовке: "НГ 2026", "2025" ──
+        if re.match(r'^.{0,6}\d{4}\s*$', s):
+            continue
+
+        # ── UI-мусор ──
         ui_trash = {
             "shuffle", "repeat", "search", "explicit", "playlist",
             "поделиться", "добавить", "слушать", "играть", "скачать",
@@ -706,7 +757,7 @@ def _ocr_extract_lines(text: str) -> list[str]:
         if re.match(r'^[\d\s:\.]+$', s):
             continue
 
-        # ── Качество строки ──
+        # ── Quality check ──
         quality = _line_quality_score(s)
         if quality < 0.35:
             log.debug("OCR line dropped (q=%.2f): '%s'", quality, s)
@@ -757,7 +808,7 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
             "artist": artist,
             "title": title,
             "duration_sec": 0,
-            "search_query": f"{artist} - {title}",
+            "search_query": f"{title} {artist}",
         })
 
     if tracks:
@@ -765,7 +816,7 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
         return tracks
 
     # ═══════════════════════════════════════
-    #  Подготовка: фильтруем только качественные строки
+    #  Подготовка: фильтруем качественные строки
     # ═══════════════════════════════════════
     quality_lines = []
     for line in lines:
@@ -783,62 +834,64 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
     log.info(
         "OCR quality lines: %d/%d → %s",
         len(quality_lines), len(lines),
-        [(s, round(q, 2)) for s, q in quality_lines[:12]],
+        [(s, round(q, 2)) for s, q in quality_lines[:16]],
     )
 
     # ═══════════════════════════════════════
     #  Стратегия 2: парные строки (title + artist)
-    #  Только если чётное количество качественных строк ≥ 4
-    #  и обе строки в паре имеют высокое качество
+    #  Только если ≥ 4 качественных строки
     # ═══════════════════════════════════════
-    if len(quality_lines) >= 4 and len(quality_lines) % 2 == 0:
-        paired_tracks = []
-        valid_pairs = 0
-        total_pairs = len(quality_lines) // 2
+    if len(quality_lines) >= 4:
+        # Если нечётное число — последняя строка лишняя (мусор UI)
+        pair_lines = quality_lines
+        if len(pair_lines) % 2 != 0:
+            # Отбрасываем строку с наименьшим quality
+            worst_idx = min(range(len(pair_lines)), key=lambda i: pair_lines[i][1])
+            dropped = pair_lines[worst_idx]
+            pair_lines = pair_lines[:worst_idx] + pair_lines[worst_idx + 1:]
+            log.info("OCR dropped odd line (q=%.2f): '%s'", dropped[1], dropped[0])
 
-        for i in range(0, len(quality_lines) - 1, 2):
-            title, tq = quality_lines[i]
-            artist, aq = quality_lines[i + 1]
+        if len(pair_lines) >= 4 and len(pair_lines) % 2 == 0:
+            paired_tracks = []
+            valid_pairs = 0
+            total_pairs = len(pair_lines) // 2
 
-            if len(title) < 2 or len(artist) < 2:
-                continue
+            for i in range(0, len(pair_lines) - 1, 2):
+                title, tq = pair_lines[i]
+                artist, aq = pair_lines[i + 1]
 
-            # Обе строки должны быть достаточно качественными
-            if tq >= 0.45 and aq >= 0.45:
-                valid_pairs += 1
-                paired_tracks.append({
-                    "artist": artist,
-                    "title": title,
-                    "duration_sec": 0,
-                    "search_query": f"{artist} - {title}",
-                })
+                if len(title) < 2 or len(artist) < 2:
+                    continue
 
-        # Принимаем стратегию 2, только если ≥60% пар валидные
-        if total_pairs > 0 and valid_pairs / total_pairs >= 0.6 and paired_tracks:
-            log.info(
-                "OCR strategy 2 (paired) → %d tracks (%d/%d valid pairs)",
-                len(paired_tracks), valid_pairs, total_pairs,
-            )
-            return paired_tracks
+                if tq >= 0.45 and aq >= 0.45:
+                    valid_pairs += 1
+                    paired_tracks.append({
+                        "artist": artist,
+                        "title": title,
+                        "duration_sec": 0,
+                        "search_query": f"{title} {artist}",
+                    })
+
+            if total_pairs > 0 and valid_pairs / total_pairs >= 0.5 and paired_tracks:
+                log.info(
+                    "OCR strategy 2 (paired) → %d tracks (%d/%d valid)",
+                    len(paired_tracks), valid_pairs, total_pairs,
+                )
+                return paired_tracks
 
     # ═══════════════════════════════════════
-    #  Стратегия 3: smart merge + raw search
-    #  Пробуем склеить соседние строки в запрос,
-    #  а одиночные использовать как есть
+    #  Стратегия 3: smart merge
     # ═══════════════════════════════════════
     clean_lines = [s for s, q in quality_lines]
-
     if not clean_lines:
         clean_lines = [l for l in lines if len(l.strip()) >= 4]
 
     if len(clean_lines) >= 2:
-        # Пробуем склеить пары (даже нечётные) — ищем как "title artist"
         i = 0
         while i < len(clean_lines):
             s1 = clean_lines[i]
             if i + 1 < len(clean_lines):
                 s2 = clean_lines[i + 1]
-                # Склеиваем в один поисковый запрос
                 merged = f"{s1} {s2}"
                 tracks.append({
                     "artist": s2,
@@ -848,7 +901,6 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
                 })
                 i += 2
             else:
-                # Последняя непарная строка — ищем как есть
                 tracks.append({
                     "artist": "",
                     "title": s1,
@@ -857,7 +909,6 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
                 })
                 i += 1
     else:
-        # Совсем мало строк — каждую как отдельный запрос
         for s in clean_lines:
             if len(s) < 4:
                 continue
