@@ -310,10 +310,6 @@
         <input type="text" id="fav-search-input" placeholder="Название трека или артист">
       </div>`;
 
-    searchInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") hideKeyboard();
-    });
-
     $list.innerHTML = searchInputHtml + `
       <div class="track-list" id="fav-tracks-list">
         ${favoriteTracks.map((t, i) => {
@@ -342,6 +338,10 @@
 
     const searchInput = $("fav-search-input");
     const listEl = $("fav-tracks-list");
+
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") hideKeyboard();
+    });
 
     searchInput.addEventListener("input", (e) => {
       const q = e.target.value.trim().toLowerCase();
