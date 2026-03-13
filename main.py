@@ -643,33 +643,46 @@ def _ocr_extract_lines(text: str) -> list[str]:
         if not s:
             continue
 
-        # убираем нумерацию в начале
-        s = re.sub(r"^\s*\d+[\.\)]?\s*", "", s)
+        # ── Чистим OCR-мусор ──
+        # Убираем типичные артефакты: ©, ®, ™, •, повторяющиеся спецсимволы
+        s = re.sub(r'[©®™°•·|]+', ' ', s)
+        # Убираем мусорные префиксы: _. ... , # , цифры с точками
+        s = re.sub(r'^[\s_\.\-\#\*…]+', '', s)
+        # Убираем нумерацию
+        s = re.sub(r'^\s*\d+[\.\)]\s*', '', s)
+        # Убираем длительность в конце (3:45, 04:12)
+        s = re.sub(r'\s+\d{1,2}:\d{2}\s*$', '', s)
+        # Убираем одиночные буквы/символы на краях
+        s = re.sub(r'^[a-zA-Zа-яА-Я]{1}\s+', '', s)
+        s = re.sub(r'\s+[a-zA-Zа-яА-Я]{1}$', '', s)
 
-        # убираем длительность в конце
-        s = re.sub(r"\s+\d{1,2}:\d{2}$", "", s)
-
-        # нормализуем OCR-мусорные тире
+        # Нормализуем тире
         s = s.replace("—", "-").replace("–", "-").replace("−", "-")
-        s = re.sub(r"\s*-\s*", " - ", s)
+        s = re.sub(r'\s+', ' ', s).strip()
 
-        # чистим лишние пробелы
-        s = re.sub(r"\s+", " ", s).strip()
-
-        # фильтруем слишком короткий мусор
-        if len(s) < 4:
+        if len(s) < 3:
             continue
 
-        # выкидываем типичный UI-мусор
+        # UI-мусор
         low = s.lower()
-        if low in {
+        ui_trash = {
             "shuffle", "repeat", "search", "explicit", "playlist",
-            "поделиться", "добавить", "слушать", "играть"
-        }:
+            "поделиться", "добавить", "слушать", "играть", "скачать",
+            "далее", "назад", "пауза", "стоп", "play", "pause",
+            "like", "dislike", "download", "share", "queue",
+            "моя музыка", "my music", "мне нравится", "liked",
+            "все треки", "all tracks",
+        }
+        if low in ui_trash:
+            continue
+
+        # Чисто числовые строки — мусор
+        if re.match(r'^[\d\s:\.]+$', s):
             continue
 
         lines.append(s)
 
+    # Дедупликация
     seen = set()
     out = []
     for s in lines:
@@ -685,13 +698,14 @@ def _ocr_extract_lines(text: str) -> list[str]:
 def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
     tracks = []
 
+    # ═══════════════════════════════════════
+    #  Стратегия 1: «Artist - Title» через тире
+    # ═══════════════════════════════════════
     for line in lines:
         s = line.strip()
-
-        # нормализация тире
         s = s.replace("—", "-").replace("–", "-").replace("−", "-")
-        s = re.sub(r"\s*-\s*", " - ", s)
-        s = re.sub(r"\s+", " ", s).strip()
+        s = re.sub(r'\s*-\s*', ' - ', s)
+        s = re.sub(r'\s+', ' ', s).strip()
 
         if " - " not in s:
             continue
@@ -700,11 +714,9 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
         artist = artist.strip(" -")
         title = title.strip(" -")
 
-        # слишком короткие / мусорные куски отбрасываем
         if len(artist) < 2 or len(title) < 2:
             continue
 
-        # явный UI-мусор тоже отбрасываем
         low = f"{artist} {title}".lower()
         if any(bad in low for bad in ["поделиться", "добавить", "playlist", "shuffle", "repeat"]):
             continue
@@ -716,33 +728,121 @@ def _ocr_lines_to_tracks(lines: list[str]) -> list[dict]:
             "search_query": f"{artist} - {title}",
         })
 
+    if tracks:
+        log.info("OCR parse: strategy 1 (dash-separated) → %d tracks", len(tracks))
+        return tracks
+
+    # ═══════════════════════════════════════
+    #  Стратегия 2: парные строки (title + artist)
+    #  Музыкальные приложения показывают:
+    #    Строка 1: Название (крупнее/жирнее)
+    #    Строка 2: Исполнитель (мельче/бледнее)
+    # ═══════════════════════════════════════
+    text_lines = []
+    for line in lines:
+        s = line.strip()
+        # Пропускаем чистые таймстампы
+        if re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', s):
+            continue
+        # Пропускаем чистые числа (номера треков, счётчики)
+        if re.match(r'^\d+$', s):
+            continue
+        if len(s) < 2:
+            continue
+        text_lines.append(s)
+
+    if len(text_lines) >= 2:
+        for i in range(0, len(text_lines) - 1, 2):
+            title = text_lines[i].strip()
+            artist = text_lines[i + 1].strip()
+
+            if len(title) < 2 or len(artist) < 2:
+                continue
+
+            tracks.append({
+                "artist": artist,
+                "title": title,
+                "duration_sec": 0,
+                "search_query": f"{artist} - {title}",
+            })
+
+    if tracks:
+        log.info("OCR parse: strategy 2 (paired lines) → %d tracks", len(tracks))
+        return tracks
+
+    # ═══════════════════════════════════════
+    #  Стратегия 3: каждая строка = поисковый запрос
+    #  Последний шанс — ищем как есть
+    # ═══════════════════════════════════════
+    source_lines = text_lines if text_lines else lines
+    for line in source_lines:
+        s = line.strip()
+        if len(s) < 4:
+            continue
+        tracks.append({
+            "artist": "",
+            "title": s,
+            "duration_sec": 0,
+            "search_query": s,
+        })
+
+    if tracks:
+        log.info("OCR parse: strategy 3 (raw search) → %d tracks", len(tracks))
+
     return tracks
 
 
 def _ocr_image_to_text(image_bytes: bytes) -> str:
-    img = Image.open(io.BytesIO(image_bytes)).convert("L")
+    img = Image.open(io.BytesIO(image_bytes))
+    gray = img.convert("L")
+    w, h = gray.size
 
-    # усиливаем контраст и чистим мелкий мусор
-    img = ImageOps.autocontrast(img)
-    img = img.filter(ImageFilter.MedianFilter(size=3))
-    img = img.filter(ImageFilter.SHARPEN)
+    # ── Определяем тёмную тему по средней яркости ──
+    pixels = list(gray.getdata())
+    mean_brightness = sum(pixels) / len(pixels) if pixels else 128
 
-    # увеличиваем изображение
-    w, h = img.size
-    scale = 2.5
-    img = img.resize((int(w * scale), int(h * scale)))
+    if mean_brightness < 128:
+        gray = ImageOps.invert(gray)
+        log.info("OCR: dark theme detected (mean=%.0f), inverting", mean_brightness)
 
-    # бинаризация для более стабильного OCR на UI-скринах
-    img = img.point(lambda p: 255 if p > 160 else 0)
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    gray = gray.filter(ImageFilter.SHARPEN)
 
-    config = "--oem 3 --psm 6"
+    # Увеличиваем для лучшего распознавания
+    scale = 3
+    gray = gray.resize((w * scale, h * scale), Image.LANCZOS)
 
-    text_rus_eng = pytesseract.image_to_string(img, lang="rus+eng", config=config)
-    text_eng = pytesseract.image_to_string(img, lang="eng", config=config)
+    # ── Пробуем несколько порогов и PSM-режимов, берём лучший ──
+    best_text = ""
+    best_score = 0
 
-    # иногда rus+eng работает хуже, чем чистый eng, поэтому склеиваем
-    combined = "\n".join([text_rus_eng or "", text_eng or ""]).strip()
-    return combined
+    for threshold in [110, 140, 170, 200]:
+        binary = gray.point(lambda p, t=threshold: 255 if p > t else 0)
+
+        for psm in [4, 6]:
+            config = f"--oem 3 --psm {psm}"
+            try:
+                text = pytesseract.image_to_string(binary, lang="rus+eng", config=config)
+                # Считаем «полезные» строки — не чистый мусор
+                useful = [
+                    l.strip() for l in text.splitlines()
+                    if l.strip()
+                    and len(l.strip()) >= 3
+                    and not re.match(r'^[\W\d\s]+$', l.strip())
+                ]
+                score = len(useful)
+                if score > best_score:
+                    best_score = score
+                    best_text = text
+            except Exception as e:
+                log.warning("OCR attempt (psm=%d, thresh=%d): %s", psm, threshold, e)
+
+    log.info(
+        "OCR best result: %d useful lines (mean_brightness=%.0f)",
+        best_score, mean_brightness,
+    )
+    return best_text
+
 
 @app.get("/api/import/yandex/status/{task_id}")
 async def api_import_status(task_id: str, user: dict = Depends(get_user)):
@@ -815,26 +915,26 @@ async def api_import_yandex_screenshot(
 
     try:
         text = await asyncio.to_thread(_ocr_image_to_text, data)
-        preview = (text or "").replace("\n", " | ")[:500]
-        log.info("Screenshot OCR text preview: %s", preview)
+        preview = (text or "").replace("\n", " | ")[:800]
+        log.info("Screenshot OCR raw text: %s", preview)
     except Exception as exc:
-        log.error("Yandex screenshot OCR failed: %s", exc, exc_info=True)
+        log.error("Screenshot OCR failed: %s", exc, exc_info=True)
         raise HTTPException(500, "Не удалось распознать скриншот")
 
     lines = _ocr_extract_lines(text)
-    tracks = _ocr_lines_to_tracks(lines)
+    log.info("Screenshot OCR cleaned lines (%d): %s", len(lines), lines[:20])
 
+    tracks = _ocr_lines_to_tracks(lines)
     log.info(
-        "Screenshot import OCR: user=%s lines=%d tracks=%d",
-        user["id"],
-        len(lines),
-        len(tracks),
+        "Screenshot import: user=%s lines=%d tracks=%d",
+        user["id"], len(lines), len(tracks),
     )
 
     if not tracks:
         raise HTTPException(
             400,
-            "Не удалось распознать треки на скриншоте. Попробуй более четкий скриншот со списком вида «Artist - Title»."
+            "Не удалось распознать треки на скриншоте. "
+            "Убедись, что на скриншоте видны названия треков и исполнители."
         )
 
     return _import_tracks_stream(
